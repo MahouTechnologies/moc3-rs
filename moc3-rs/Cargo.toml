@@ -1,0 +1,13 @@
+[package]
+name = "moc3-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+binrw = "0.11.1"
+bytemuck = { version = "1.13.1", features = ["extern_crate_alloc", "derive"] }
+glam = { version = "0.23.0", features = ["bytemuck"] }
+indextree = "4.6.0"
+modular-bitfield = "0.11.2"
+serde = { version = "1.0.152", features = ["derive"] }
+

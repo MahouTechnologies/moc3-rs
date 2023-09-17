@@ -6,11 +6,11 @@ use wgpu::{
     *,
 };
 
-use crate::puppet::{Puppet, PuppetFrameData};
+use moc3_rs::puppet::{Puppet, PuppetFrameData};
 
 pub struct Renderer {
-    texture_layout: BindGroupLayout,
-    uniform_layout: BindGroupLayout,
+    _texture_layout: BindGroupLayout,
+    _uniform_layout: BindGroupLayout,
     pipeline: RenderPipeline,
 
     bound_textures: Vec<BindGroup>,
@@ -25,7 +25,7 @@ impl Renderer {
         &mut self,
         _device: &Device,
         queue: &Queue,
-        puppet: &Puppet,
+        _puppet: &Puppet,
         frame_data: &PuppetFrameData,
     ) {
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
@@ -194,8 +194,8 @@ pub fn new_renderer(
     }
 
     Renderer {
-        texture_layout,
-        uniform_layout,
+        _texture_layout: texture_layout,
+        _uniform_layout: uniform_layout,
         pipeline,
 
         bound_textures,
@@ -248,10 +248,4 @@ fn pipeline_for(
         multisample: MultisampleState::default(),
         multiview: None,
     })
-}
-
-pub fn argsort(data: &[f32]) -> Vec<usize> {
-    let mut indices = (0..data.len()).collect::<Vec<_>>();
-    indices.sort_by(|x, y| data[*x].total_cmp(&data[*y]));
-    indices
 }

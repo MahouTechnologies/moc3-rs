@@ -1,23 +1,16 @@
 use binrw::BinReaderExt;
-use puppet::{puppet_from_moc3, Puppet};
-use renderer::wgpu::new_renderer;
+use moc3_rs::{data::Moc3Data, puppet::{puppet_from_moc3, PuppetFrameData, Puppet}};
+use moc3_wgpu::renderer::new_renderer;
 use std::fs::File;
 use std::io::BufReader;
 use wgpu::{CompositeAlphaMode, TextureFormat};
 use winit::{event::Event, event_loop::EventLoop, window::WindowBuilder};
 
-use crate::puppet::PuppetFrameData;
-
-mod data;
-mod deformer;
-mod interpolate;
-mod puppet;
-mod renderer;
 
 fn main() {
     let f = File::open("test.moc3").unwrap();
     let mut reader = BufReader::new(f);
-    let read: data::Moc3Data = reader.read_le().unwrap();
+    let read: Moc3Data = reader.read_le().unwrap();
 
     let puppet = puppet_from_moc3(&read);
 
@@ -120,77 +113,3 @@ pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
         _ => {}
     });
 }
-
-// Potentially useful, should be moved to actual docs
-
-// ```dot
-// digraph G {
-//     D [label="ArtMesh"]
-//     DK [label="ArtMesh Keyform"]
-
-//     P [label="Parameter"];
-//     PBI [label="Parameter Binding Index"];
-//     PB [label="Parameter Binding"];
-//     KI [label="Key Index"];
-
-//     PMaxV [label="Parameter Max Value"]
-//     PMinV [label="Parameter Min Value"]
-//     PDefV [label="Parameter Default Value"]
-
-//     K [label="Key"];
-
-//     KB [label="Keyform Binding"];
-//     KPI [label="Keyform Position Index"]
-//     KP [label="Keyform Position"]
-
-//     VC [label="Vertex Counts"]
-//     TN [label="Texture Number"]
-
-//     D -> DK [style="dashed"];
-//     D -> VC;
-//     D -> KB;
-//     D -> TN;
-
-//     D -> PBI;
-//     DK -> KPI;
-//     KPI -> KP [style="dotted"];
-
-//     P -> PB [style="dashed"];
-//     P -> PMaxV;
-//     P -> PMinV;
-//     P -> PDefV;
-
-//     KB -> PBI [style="dashed"];
-
-//     PBI -> PB [style="dotted"];
-//     PB -> KI;
-//     KI -> K [style="dotted"];
-
-//     De [label="Deformer"];
-//     WDe [label="Warp Deformer"];
-//     RDe [label="Rotation Deformer"];
-//     WdeK [label="Warp Deformer Keyform"];
-//     RdeK [label="Rotation Deformer Keyform"];
-
-//     De -> WDe;
-//     De -> RDe;
-//     // De -> KB; this exists but is inconvient to deal with / graph
-//     WDe -> KB;
-//     WDe -> WdeK [style="dashed"];
-//     WdeK -> KPI;
-//     RDe -> KB;
-//     RDe -> RdeK [style="dashed"];
-
-//     XOri [label="X Origin"];
-//     YOri [label="Y Origin"]
-//     XRef [label="X Reflect"]
-//     YRef [label="Y Reflect"]
-//     Ang [label="Angle"]
-
-//     RdeK -> XOri;
-//     RdeK -> YOri;
-//     RdeK -> Ang;
-//     RdeK -> XRef;
-//     RdeK -> YRef;
-// }
-// ```
