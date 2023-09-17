@@ -1,5 +1,6 @@
 use bytemuck::cast_slice;
-use glam::{Mat4, Vec2};
+use encase::{ShaderSize, ShaderType, UniformBuffer};
+use glam::{Mat4, Vec2, Vec3};
 use image::RgbaImage;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -8,12 +9,23 @@ use wgpu::{
 
 use moc3_rs::puppet::{Puppet, PuppetFrameData};
 
+#[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
+
+struct Uniform {
+    pub multiply_color: Vec3,
+    pub screen_color: Vec3,
+    pub opacity: f32,
+}
+
 pub struct Renderer {
-    _texture_layout: BindGroupLayout,
-    _uniform_layout: BindGroupLayout,
     pipeline: RenderPipeline,
 
     bound_textures: Vec<BindGroup>,
+    uniform_bind_group: BindGroup,
+    uniform_alignment_needed: u64,
+
+    camera_buffer: Buffer,
+    uniform_buffer: Buffer,
 
     uv_buffers: Vec<Buffer>,
     index_buffers: Vec<Buffer>,
@@ -25,11 +37,29 @@ impl Renderer {
         &mut self,
         _device: &Device,
         queue: &Queue,
-        _puppet: &Puppet,
+        puppet: &Puppet,
         frame_data: &PuppetFrameData,
     ) {
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
+        }
+
+        dbg!(frame_data.art_mesh_opacities[27]);
+
+        for i in 0..puppet.art_mesh_count as usize {
+            let uniform = Uniform {
+                multiply_color: Vec3::ONE,
+                screen_color: Vec3::ZERO,
+                opacity: frame_data.art_mesh_opacities[i],
+            };
+
+            let mut buffer = UniformBuffer::new([0; Uniform::SHADER_SIZE.get() as usize]);
+            buffer.write(&uniform).unwrap();
+            queue.write_buffer(
+                &self.uniform_buffer,
+                self.uniform_alignment_needed * i as u64,
+                buffer.as_ref(),
+            );
         }
     }
 
@@ -53,10 +83,12 @@ impl Renderer {
         });
         rpass.set_pipeline(&self.pipeline);
 
-        for i in &frame_data.art_mesh_render_orders {
-            let i = *i as usize;
+        for i in frame_data.art_mesh_render_orders.iter().copied() {
+            rpass.set_bind_group(0, &self.uniform_bind_group, &[self.uniform_alignment_needed as u32 * i]);
+            rpass.set_bind_group(1, &self.bound_textures[0], &[]);
+
+            let i = i as usize;
             let x = self.index_buffers[i].size() / 2;
-            rpass.set_bind_group(0, &self.bound_textures[0], &[]);
             rpass.set_index_buffer(self.index_buffers[i].slice(..), IndexFormat::Uint16);
             rpass.set_vertex_buffer(0, self.vertex_buffers[i].slice(..));
             rpass.set_vertex_buffer(1, self.uv_buffers[i].slice(..));
@@ -142,25 +174,73 @@ pub fn new_renderer(
     }
 
     let uniform_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        entries: &[BindGroupLayoutEntry {
-            binding: 0,
-            visibility: ShaderStages::VERTEX,
-            ty: BindingType::Buffer {
-                ty: BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                min_binding_size: BufferSize::new(std::mem::size_of::<Mat4>() as u64),
+        entries: &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: BufferSize::new(std::mem::size_of::<Mat4>() as u64),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: Some(Uniform::SHADER_SIZE),
+                },
+                count: None,
+            },
+        ],
         label: None,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        bind_group_layouts: &[/*&uniform_layout, */ &texture_layout],
+        bind_group_layouts: &[&uniform_layout, &texture_layout],
         ..PipelineLayoutDescriptor::default()
     });
 
     let pipeline = pipeline_for(device, None, &pipeline_layout, format);
+
+    let camera_buffer = device.create_buffer(&BufferDescriptor {
+        size: std::mem::size_of::<Mat4>() as u64,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+        label: None,
+    });
+
+    let min_uniform_alignment = device.limits().min_uniform_buffer_offset_alignment;
+    let uniform_alignment_needed = Uniform::SHADER_SIZE.get().max(min_uniform_alignment as u64);
+
+    let uniform_buffer = device.create_buffer(&BufferDescriptor {
+        size: uniform_alignment_needed * puppet.art_mesh_count as u64,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+        label: None,
+    });
+
+    let uniform_bind_group = device.create_bind_group(&BindGroupDescriptor {
+        layout: &uniform_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &uniform_buffer,
+                    offset: 0,
+                    size: Some(Uniform::SHADER_SIZE)
+                }),
+            },
+        ],
+        label: None,
+    });
 
     // TODO: this is dumb - blot it into a single buffer instead
     let mut uv_buffers = Vec::with_capacity(puppet.art_mesh_count as usize);
@@ -194,11 +274,14 @@ pub fn new_renderer(
     }
 
     Renderer {
-        _texture_layout: texture_layout,
-        _uniform_layout: uniform_layout,
         pipeline,
 
         bound_textures,
+        uniform_bind_group,
+        uniform_alignment_needed,
+
+        camera_buffer,
+        uniform_buffer,
 
         uv_buffers,
         index_buffers,

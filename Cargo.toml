@@ -4,3 +4,4 @@ members = [
     "moc3-rs",
     "moc3-wgpu",
 ]
+resolver = "2"

@@ -518,7 +518,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
 
         // TODO: replace this, I was told the 3 is a suggestion and not a hard cap
-        assert!(parameter_bindings_count <= 3);
+        // assert!(parameter_bindings_count <= 3);
         let x_index = if parameter_bindings_count >= 1 {
             let ind = parameter_binding_indices.binding_sources_indices[parameter_bindings_start]
                 as usize;

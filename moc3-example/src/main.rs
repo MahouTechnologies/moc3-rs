@@ -1,11 +1,13 @@
 use binrw::BinReaderExt;
-use moc3_rs::{data::Moc3Data, puppet::{puppet_from_moc3, PuppetFrameData, Puppet}};
+use moc3_rs::{
+    data::Moc3Data,
+    puppet::{puppet_from_moc3, Puppet, PuppetFrameData},
+};
 use moc3_wgpu::renderer::new_renderer;
 use std::fs::File;
 use std::io::BufReader;
 use wgpu::{CompositeAlphaMode, TextureFormat};
 use winit::{event::Event, event_loop::EventLoop, window::WindowBuilder};
-
 
 fn main() {
     let f = File::open("test.moc3").unwrap();
