@@ -33,20 +33,18 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn prepare(
-        &mut self,
-        _device: &Device,
-        queue: &Queue,
-        puppet: &Puppet,
-        frame_data: &PuppetFrameData,
-    ) {
+    pub fn prepare(&mut self, _device: &Device, queue: &Queue, frame_data: &PuppetFrameData) {
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
         }
 
-        dbg!(frame_data.art_mesh_opacities[27]);
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[Mat4::IDENTITY]),
+        );
 
-        for i in 0..puppet.art_mesh_count as usize {
+        for i in 0..frame_data.art_mesh_count as usize {
             let uniform = Uniform {
                 multiply_color: Vec3::ONE,
                 screen_color: Vec3::ZERO,
@@ -84,14 +82,23 @@ impl Renderer {
         rpass.set_pipeline(&self.pipeline);
 
         for i in frame_data.art_mesh_render_orders.iter().copied() {
-            rpass.set_bind_group(0, &self.uniform_bind_group, &[self.uniform_alignment_needed as u32 * i]);
-            rpass.set_bind_group(1, &self.bound_textures[0], &[]);
+            rpass.set_bind_group(
+                0,
+                &self.uniform_bind_group,
+                &[self.uniform_alignment_needed as u32 * i],
+            );
 
             let i = i as usize;
-            let x = self.index_buffers[i].size() / 2;
+            rpass.set_bind_group(
+                1,
+                &self.bound_textures[frame_data.art_mesh_textures[i] as usize],
+                &[],
+            );
             rpass.set_index_buffer(self.index_buffers[i].slice(..), IndexFormat::Uint16);
             rpass.set_vertex_buffer(0, self.vertex_buffers[i].slice(..));
             rpass.set_vertex_buffer(1, self.uv_buffers[i].slice(..));
+
+            let x = self.index_buffers[i].size() / 2;
             rpass.draw_indexed(0..(x as u32), 0, 0..1);
         }
     }
@@ -235,7 +242,7 @@ pub fn new_renderer(
                 resource: BindingResource::Buffer(BufferBinding {
                     buffer: &uniform_buffer,
                     offset: 0,
-                    size: Some(Uniform::SHADER_SIZE)
+                    size: Some(Uniform::SHADER_SIZE),
                 }),
             },
         ],

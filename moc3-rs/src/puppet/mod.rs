@@ -79,6 +79,9 @@ pub struct Puppet {
 
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
+    pub art_mesh_count: u32,
+    pub art_mesh_textures: Vec<u32>,
+
     pub art_mesh_data: Vec<Vec<Vec2>>,
     pub art_mesh_draw_orders: Vec<f32>,
     pub art_mesh_render_orders: Vec<u32>,

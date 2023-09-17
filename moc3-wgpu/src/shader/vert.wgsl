@@ -12,7 +12,7 @@ fn vs_main(
     @location(1) uv: vec2<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = mat4x4f(1.5, 0.0, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.0) * vec4f(vertex, 0.0, 1.0);
+    out.position = u_camera * mat4x4f(1.5, 0.0, 0.0, 0.0, 0.0, -1.5, 0.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.0) * vec4f(vertex, 0.0, 1.0);
     out.uv = uv;
     return out;
 }

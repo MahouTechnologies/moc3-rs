@@ -28,6 +28,9 @@ fn main() {
     let glue_data = vec![Default::default(); read.table.count_info.glues as usize];
 
     let mut frame_data = PuppetFrameData {
+        art_mesh_count: read.table.count_info.art_meshes,
+        art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
+
         art_mesh_data,
         warp_deformer_data,
         rotation_deformer_data,
@@ -101,7 +104,7 @@ pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
             let output = surface.get_current_texture().unwrap();
             let view = (output.texture).create_view(&wgpu::TextureViewDescriptor::default());
 
-            renderer.prepare(&device, &queue, &puppet, &frame_data);
+            renderer.prepare(&device, &queue, &frame_data);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             renderer.render(&view, &mut encoder, &frame_data);
