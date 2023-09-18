@@ -19,6 +19,8 @@ struct Uniform {
 
 pub struct Renderer {
     pipeline: RenderPipeline,
+    texture_nums: Vec<u32>,
+    render_orders: Vec<u32>,
 
     bound_textures: Vec<BindGroup>,
     uniform_bind_group: BindGroup,
@@ -34,6 +36,7 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn prepare(&mut self, _device: &Device, queue: &Queue, frame_data: &PuppetFrameData) {
+        self.render_orders[..].copy_from_slice(&frame_data.art_mesh_render_orders);
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
         }
@@ -44,7 +47,7 @@ impl Renderer {
             bytemuck::cast_slice(&[Mat4::IDENTITY]),
         );
 
-        for i in 0..frame_data.art_mesh_count as usize {
+        for i in 0..self.texture_nums.len() {
             let uniform = Uniform {
                 multiply_color: Vec3::ONE,
                 screen_color: Vec3::ZERO,
@@ -89,11 +92,7 @@ impl Renderer {
             );
 
             let i = i as usize;
-            rpass.set_bind_group(
-                1,
-                &self.bound_textures[frame_data.art_mesh_textures[i] as usize],
-                &[],
-            );
+            rpass.set_bind_group(1, &self.bound_textures[self.texture_nums[i] as usize], &[]);
             rpass.set_index_buffer(self.index_buffers[i].slice(..), IndexFormat::Uint16);
             rpass.set_vertex_buffer(0, self.vertex_buffers[i].slice(..));
             rpass.set_vertex_buffer(1, self.uv_buffers[i].slice(..));
@@ -282,6 +281,8 @@ pub fn new_renderer(
 
     Renderer {
         pipeline,
+        texture_nums: puppet.art_mesh_textures.clone(),
+        render_orders: vec![0; puppet.art_mesh_count as usize],
 
         bound_textures,
         uniform_bind_group,

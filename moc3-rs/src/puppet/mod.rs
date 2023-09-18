@@ -25,39 +25,6 @@ use self::{
     node::{DeformerNode, GlueNode},
 };
 
-// Returns the index of the element directly less than and the index of the element directly
-// greater than the given element.
-// Note this the values given are not *strictly* greater or less - if the given element
-// is present in the slice, the index of the given element will be returned, but it is
-// unspecified whether it will be the greater or lesser value.
-//
-// This function assumes the slice is sorted, and will give meaningless results otherwise.
-// This function also assumes that the given element exists in the bounds of the slice.
-fn lower_upper_indices(slice: &[f32], elem: &f32) -> (usize, usize) {
-    debug_assert!(slice.len() > 1);
-
-    let value = slice.binary_search_by(|x| x.total_cmp(elem));
-    match value {
-        Ok(index) => {
-            if index == 0 {
-                // Element was first value, we can only return second
-                (0, 1)
-            } else if index == slice.len() - 1 {
-                // Element was last value, we can only return second-to-last
-                (slice.len() - 2, slice.len() - 1)
-            } else {
-                // We can chose either side here - this is arbitrary
-                (index, index + 1)
-            }
-        }
-        Err(index) => {
-            // We assume that an invalid value is in between the first and last element, so
-            // this subtraction will work fine.
-            (index - 1, index)
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Puppet {
     pub node_roots: Vec<NodeId>,
@@ -70,6 +37,7 @@ pub struct Puppet {
     pub art_mesh_count: u32,
     pub art_mesh_uvs: Vec<Vec<Vec2>>,
     pub art_mesh_indices: Vec<Vec<u16>>,
+    pub art_mesh_textures: Vec<u32>,
     pub vertexes_count: Vec<u32>,
 
     pub draw_order_nodes: Arena<DrawOrderNode>,
@@ -79,9 +47,6 @@ pub struct Puppet {
 
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
-    pub art_mesh_count: u32,
-    pub art_mesh_textures: Vec<u32>,
-
     pub art_mesh_data: Vec<Vec<Vec2>>,
     pub art_mesh_draw_orders: Vec<f32>,
     pub art_mesh_render_orders: Vec<u32>,
@@ -715,6 +680,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
         art_mesh_count: read.table.count_info.art_meshes,
         art_mesh_indices,
+        art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
         art_mesh_uvs,
         vertexes_count: read.table.art_meshes.vertex_counts.clone(),
 

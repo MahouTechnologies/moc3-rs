@@ -1004,6 +1004,7 @@ dependencies = [
  "indextree",
  "modular-bitfield",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

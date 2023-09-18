@@ -28,9 +28,6 @@ fn main() {
     let glue_data = vec![Default::default(); read.table.count_info.glues as usize];
 
     let mut frame_data = PuppetFrameData {
-        art_mesh_count: read.table.count_info.art_meshes,
-        art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
-
         art_mesh_data,
         warp_deformer_data,
         rotation_deformer_data,

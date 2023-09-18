@@ -8,7 +8,40 @@ use crate::{
     interpolate::{bilinear_interp, linear_interp, trilinear_interp},
 };
 
-use super::{lower_upper_indices, PuppetFrameData};
+use super::PuppetFrameData;
+
+// Returns the index of the element directly less than and the index of the element directly
+// greater than the given element.
+// Note this the values given are not *strictly* greater or less - if the given element
+// is present in the slice, the index of the given element will be returned, but it is
+// unspecified whether it will be the greater or lesser value.
+//
+// This function assumes the slice is sorted, and will give meaningless results otherwise.
+// This function also assumes that the given element exists in the bounds of the slice.
+fn lower_upper_indices(slice: &[f32], elem: &f32) -> (usize, usize) {
+    debug_assert!(slice.len() > 1);
+
+    let value = slice.binary_search_by(|x| x.total_cmp(elem));
+    match value {
+        Ok(index) => {
+            if index == 0 {
+                // Element was first value, we can only return second
+                (0, 1)
+            } else if index == slice.len() - 1 {
+                // Element was last value, we can only return second-to-last
+                (slice.len() - 2, slice.len() - 1)
+            } else {
+                // We can chose either side here - this is arbitrary
+                (index, index + 1)
+            }
+        }
+        Err(index) => {
+            // We assume that an invalid value is in between the first and last element, so
+            // this subtraction will work fine.
+            (index - 1, index)
+        }
+    }
+}
 
 /// A [ParamApplicator] is a type that can handle the work required
 /// to transform the puppet data given the input parameters.
