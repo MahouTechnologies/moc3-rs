@@ -7,11 +7,12 @@ ground-up reimplementation of the core.
 
 ## Status
 
-Currently, the implementation is targetting moc3 version 4.0, and is most of
+Currently, the implementation is targetting moc3 version 4.2, and is most of
 the way there. It is currently missing part support as well as art mesh masks,
-double-sided behavior, and blendmodes. The implementation is also deficient
-in performance, and the eventual goal is to fully optimize the implementation
-and introduce caching and incrementalization.
+double-sided behavior, blendmodes, and screen and multiply colors. The
+implementation is also deficient in performance, and the eventual goal
+is to fully optimize the implementation and introduce caching and
+incrementalization.
 
 ## Goal
 
@@ -33,5 +34,5 @@ a large central table providing offsets to more tables (with offsets to yet more
 
 Parts of the moc3 format are as of yet unknown to me, but it is likely that many stem
 from the limitations of the original Cubism 3 format and loader. I hope the deformers
-folder sheds light on any algorithims or math used to implement the deformations and
+folder sheds light on any algorithms or math used to implement the deformations and
 transformations supported in the format.

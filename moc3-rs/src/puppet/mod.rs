@@ -21,6 +21,7 @@ use crate::{
 };
 
 use self::{
+    applicator::BlendShapeConstraints,
     draw_order::{draw_order_tree, DrawOrderNode},
     node::{DeformerNode, GlueNode},
 };
@@ -177,7 +178,41 @@ impl Puppet {
     }
 }
 
-fn handle_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) {
+fn collect_blend_shape_constraints(
+    read: &Moc3Data,
+    constraint_index_start: usize,
+    constraint_index_count: usize,
+) -> Vec<BlendShapeConstraints> {
+    let blend_shape_constraints = read.table.blend_shape_constraints.as_ref().unwrap();
+    let blend_shape_constraint_indices =
+        read.table.blend_shape_constraint_indices.as_ref().unwrap();
+    let blend_shape_constraint_values = read.table.blend_shape_constraint_values.as_ref().unwrap();
+
+    let mut ret = Vec::new();
+
+    for i in constraint_index_start..constraint_index_start + constraint_index_count {
+        let index =
+            blend_shape_constraint_indices.blend_shape_constraint_sources_indices[i] as usize;
+
+        let parameter_index = blend_shape_constraints.parameter_indices[index] as usize;
+        let value_start =
+            blend_shape_constraints.blend_shape_constraint_value_sources_starts[index] as usize;
+        let value_count =
+            blend_shape_constraints.blend_shape_constraint_value_sources_counts[index] as usize;
+
+        ret.push(BlendShapeConstraints {
+            parameter_index,
+            keys: blend_shape_constraint_values.keys[value_start..value_start + value_count]
+                .to_owned(),
+            weights: blend_shape_constraint_values.weights[value_start..value_start + value_count]
+                .to_owned(),
+        })
+    }
+
+    ret
+}
+
+fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) {
     if read.header.version < Version::V4_02 {
         return;
     }
@@ -260,6 +295,13 @@ fn handle_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) 
                     )
                 };
 
+                let constraint_index_start = blend_shape_keyform_bindings
+                    .blend_shape_constraint_index_sources_starts[a]
+                    as usize;
+                let constraint_index_count = blend_shape_keyform_bindings
+                    .blend_shape_constraint_index_sources_counts[a]
+                    as usize;
+
                 applicators.push(ParamApplicator {
                     kind_index: i as u32,
                     values: ApplicatorKind::ArtMesh(
@@ -270,7 +312,11 @@ fn handle_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) 
                     x: Some(x),
                     y: None,
                     z: None,
-                    blend: true,
+                    blend: Some(collect_blend_shape_constraints(
+                        read,
+                        constraint_index_start,
+                        constraint_index_count,
+                    )),
                 });
             }
         }
@@ -303,8 +349,9 @@ fn handle_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) 
 
                 let mut positions_to_bind = Vec::new();
                 for keyform in keyform_start..keyform_start + keyform_count {
-                    let position_start =
-                        warp_deformer_keyforms.keyform_position_sources_starts[keyform] as usize / 2;
+                    let position_start = warp_deformer_keyforms.keyform_position_sources_starts
+                        [keyform] as usize
+                        / 2;
                     positions_to_bind
                         .push(positions[position_start..position_start + vertexes].to_owned());
                 }
@@ -325,16 +372,24 @@ fn handle_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) 
                     )
                 };
 
+                let constraint_index_start = blend_shape_keyform_bindings
+                    .blend_shape_constraint_index_sources_starts[a]
+                    as usize;
+                let constraint_index_count = blend_shape_keyform_bindings
+                    .blend_shape_constraint_index_sources_counts[a]
+                    as usize;
+
                 applicators.push(ParamApplicator {
                     kind_index: i as u32,
-                    values: ApplicatorKind::WarpDeformer(
-                        positions_to_bind,
-                        opacities_to_bind,
-                    ),
+                    values: ApplicatorKind::WarpDeformer(positions_to_bind, opacities_to_bind),
                     x: Some(x),
                     y: None,
                     z: None,
-                    blend: true,
+                    blend: Some(collect_blend_shape_constraints(
+                        read,
+                        constraint_index_start,
+                        constraint_index_count,
+                    )),
                 });
             }
         }
@@ -518,7 +573,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 x: x_index,
                 y: y_index,
                 z: z_index,
-                blend: false,
+                blend: None,
             });
         } else if deformers.types[i] == 1 {
             let base_angle = rotation_deformers.base_angles[specific];
@@ -620,7 +675,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 x: x_index,
                 y: y_index,
                 z: z_index,
-                blend: false,
+                blend: None,
             });
         }
     }
@@ -729,7 +784,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             x: x_index,
             y: y_index,
             z: z_index,
-            blend: false,
+            blend: None,
         });
     }
 
@@ -814,11 +869,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             x: x_index,
             y: y_index,
             z: z_index,
-            blend: false,
+            blend: None,
         });
     }
     // ----- END PARAMETER STUFF -----
-    handle_blend_shapes(read, &mut applicators);
+    collect_blend_shapes(read, &mut applicators);
 
     // Here we do the draw order groups. This lets us apply draw orders to the mesh depending on how
     // the draw order groups interact, and lets us calculate the actual priority when the nodes have the

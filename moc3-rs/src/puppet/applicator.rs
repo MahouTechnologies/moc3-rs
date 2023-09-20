@@ -4,7 +4,7 @@ use bytemuck::{cast_slice, cast_vec};
 use glam::{vec2, vec3, Vec2, Vec3};
 
 use crate::{
-    deformer::rotation_deformer::TransformData,
+    deformer::{rotation_deformer::TransformData, warp_deformer::rescale},
     interpolate::{bilinear_interp, linear_interp, trilinear_interp},
 };
 
@@ -43,6 +43,24 @@ fn lower_upper_indices(slice: &[f32], elem: &f32) -> (usize, usize) {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BlendShapeConstraints {
+    pub parameter_index: usize,
+    pub keys: Vec<f32>,
+    pub weights: Vec<f32>,
+}
+
+impl BlendShapeConstraints {
+    pub fn process(&self, parameters: &[f32]) -> f32 {
+        let param = parameters[self.parameter_index];
+        let (lower, upper) = lower_upper_indices(&self.keys, &param);
+        let scaled = rescale(param, self.keys[lower], self.keys[upper]);
+
+        let res = ((1.0 - scaled) * self.weights[lower]) + (scaled * self.weights[upper]);
+        res
+    }
+}
+
 /// A [ParamApplicator] is a type that can handle the work required
 /// to transform the puppet data given the input parameters.
 #[derive(Debug, Clone)]
@@ -52,7 +70,7 @@ pub struct ParamApplicator {
     pub z: Option<(Vec<f32>, usize)>,
     pub kind_index: u32,
     pub values: ApplicatorKind,
-    pub blend: bool,
+    pub blend: Option<Vec<BlendShapeConstraints>>,
 }
 
 #[derive(Debug, Clone)]
@@ -221,9 +239,15 @@ impl ParamApplicator {
             ApplicatorKind::ArtMesh(choices, opacities, draw_orders) => {
                 let data = self.do_interpolate(parameters, choices);
 
-                if self.blend {
+                if let Some(constraints) = &self.blend {
+                    let mut lowest_weight: f32 = 1.0;
+
+                    for constraint in constraints {
+                        lowest_weight = lowest_weight.min(dbg!(constraint.process(parameters)));
+                    }
+
                     for (change, diff) in frame_data.art_mesh_data[ind].iter_mut().zip(data) {
-                        *change += diff;
+                        *change += diff * lowest_weight;
                     }
                 } else {
                     frame_data.art_mesh_data[ind] = data;
