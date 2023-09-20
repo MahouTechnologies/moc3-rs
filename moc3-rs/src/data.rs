@@ -59,7 +59,7 @@ pub struct CountInfoTable {
     #[br(if(version >= Version::V4_02))]
     pub blend_shape_parameter_bindings: u32,
     #[br(if(version >= Version::V4_02))]
-    pub blend_shape_keyfrom_bindings: u32,
+    pub blend_shape_keyform_bindings: u32,
     #[br(if(version >= Version::V4_02))]
     pub blend_shape_warp_deformers: u32,
     #[br(if(version >= Version::V4_02))]
@@ -251,6 +251,102 @@ pub struct ParameterOffsets {
     pub parameter_binding_sources_counts: FilePtr32<Vec<u32>>,
 }
 
+#[derive(BinRead, Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[br(repr = u32)]
+pub enum ParameterType {
+    Normal = 0,
+    BlendShape = 1,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct ParameterOffsetsV4_02 {
+    #[br(args { inner: args! { count } })]
+    pub parameter_types: FilePtr32<Vec<ParameterType>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_parameter_binding_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_parameter_binding_sources_counts: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeParameterBindingOffsets {
+    #[br(args { inner: args! { count } })]
+    pub keys_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub keys_sources_counts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub base_key_indices: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeKeyformBindingOffsets {
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_parameter_binding_sources_indices: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub keyform_sources_blend_shape_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub keyform_sources_blend_shape_counts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_constraint_index_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_constraint_index_sources_counts: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeOffsets {
+    #[br(args { inner: args! { count } })]
+    pub target_indices: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_keyform_binding_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_keyform_binding_sources_counts: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeConstraintIndicesOffsets {
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_constraint_sources_indices: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeConstraintOffsets {
+    #[br(args { inner: args! { count } })]
+    pub parameter_indices: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_constraint_value_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub blend_shape_constraint_value_sources_counts: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct BlendShapeConstraintValueOffsets {
+    #[br(args { inner: args! { count } })]
+    pub keys: FilePtr32<Vec<f32>>,
+    #[br(args { inner: args! { count } })]
+    pub weights: FilePtr32<Vec<f32>>,
+}
+
 #[derive(BinRead, Debug)]
 #[br(import {
     count: usize
@@ -284,6 +380,15 @@ pub struct WarpDeformerKeyformOffsetsV303 {
 #[br(import {
     count: usize
 })]
+pub struct WarpDeformerKeyformOffsetsV402 {
+    #[br(args { inner: args! { count } })]
+    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
 pub struct RotationDeformerKeyformOffsets {
     #[br(args { inner: args! { count } })]
     pub opacities: FilePtr32<Vec<f32>>,
@@ -305,6 +410,15 @@ pub struct RotationDeformerKeyformOffsets {
 #[br(import {
     count: usize
 })]
+pub struct RotationDeformerKeyformOffsetsV402 {
+    #[br(args { inner: args! { count } })]
+    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
 pub struct ArtMeshKeyformOffsets {
     #[br(args { inner: args! { count } })]
     pub opacities: FilePtr32<Vec<f32>>,
@@ -318,9 +432,18 @@ pub struct ArtMeshKeyformOffsets {
 #[br(import {
     count: usize
 })]
+pub struct ArtMeshKeyformOffsetsV402 {
+    #[br(args { inner: args! { count } })]
+    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
 pub struct KeyformPositionOffsets {
     #[br(parse_with = FilePtr32::with(count_with(count / 2, vec2_parser)))]
-    pub coords: FilePtr32<Vec<Vec2>>, // TODO: Vec2
+    pub coords: FilePtr32<Vec<Vec2>>,
 }
 
 #[derive(BinRead, Debug)]
@@ -350,7 +473,6 @@ pub struct KeyformBindingOffsets {
 pub struct ParameterBindingOffsets {
     #[br(args { inner: args! { count } })]
     pub keys_sources_starts: FilePtr32<Vec<u32>>,
-    // I think this 1 for 1d, 2 for 2d
     #[br(args { inner: args! { count } })]
     pub keys_sources_counts: FilePtr32<Vec<u32>>,
 }
@@ -532,6 +654,62 @@ pub struct SectionOffsetTable {
 
     #[br(if(version >= Version::V3_03), count(count_info.warp_deformers))]
     pub warp_deformer_keyforms_v303: Option<WarpDeformerKeyformOffsetsV303>,
+
+    #[br(if(version >= Version::V4_02), count(count_info.parameters))]
+    pub parameter_extensions: Option<ParameterExtensionsOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.warp_deformers))]
+    pub warp_deformer_keyforms_v402: Option<WarpDeformerKeyformOffsetsV402>,
+    #[br(if(version >= Version::V4_02), count(count_info.rotation_deformers))]
+    pub rotation_deformer_keyforms_v402: Option<RotationDeformerKeyformOffsetsV402>,
+    #[br(if(version >= Version::V4_02), count(count_info.art_meshes))]
+    pub art_mesh_deformer_keyforms_v402: Option<ArtMeshKeyformOffsetsV402>,
+    #[br(if(version >= Version::V4_02), count(count_info.keyform_multiply_colors))]
+    pub keyform_multiply_colors: Option<KeyformColorOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.keyform_screen_colors))]
+    pub keyform_screen_colors: Option<KeyformColorOffsets>,
+
+    #[br(if(version >= Version::V4_02), count(count_info.parameters))]
+    pub parameters_v402: Option<ParameterOffsetsV4_02>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_parameter_bindings))]
+    pub blend_shape_parameter_bindings: Option<BlendShapeParameterBindingOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_keyform_bindings))]
+    pub blend_shape_keyform_bindings: Option<BlendShapeKeyformBindingOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_warp_deformers))]
+    pub blend_shape_warp_deformers: Option<BlendShapeOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_art_meshes))]
+    pub blend_shape_art_meshes: Option<BlendShapeOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraint_indices))]
+    pub blend_shape_constraint_indices: Option<BlendShapeConstraintIndicesOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraints))]
+    pub blend_shape_constraints: Option<BlendShapeConstraintOffsets>,
+    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraint_values))]
+    pub blend_shape_constraint_values: Option<BlendShapeConstraintValueOffsets>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct KeyformColorOffsets {
+    #[br(args { inner: args! { count } })]
+    pub red: FilePtr32<Vec<f32>>,
+    #[br(args { inner: args! { count } })]
+    pub green: FilePtr32<Vec<f32>>,
+    #[br(args { inner: args! { count } })]
+    pub blue: FilePtr32<Vec<f32>>,
+}
+
+#[derive(BinRead, Debug)]
+#[br(import {
+    count: usize
+})]
+pub struct ParameterExtensionsOffsets {
+    // FilePtr to count * 8 bytes of 0s
+    pub data: u32,
+    #[br(args { inner: args! { count } })]
+    pub keys_sources_starts: FilePtr32<Vec<u32>>,
+    #[br(args { inner: args! { count } })]
+    pub keys_sources_counts: FilePtr32<Vec<u32>>,
 }
 
 #[derive(BinRead, Debug)]

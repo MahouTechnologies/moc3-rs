@@ -52,6 +52,7 @@ pub struct ParamApplicator {
     pub z: Option<(Vec<f32>, usize)>,
     pub kind_index: u32,
     pub values: ApplicatorKind,
+    pub blend: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -220,11 +221,17 @@ impl ParamApplicator {
             ApplicatorKind::ArtMesh(choices, opacities, draw_orders) => {
                 let data = self.do_interpolate(parameters, choices);
 
-                frame_data.art_mesh_opacities[ind] =
-                    self.do_interpolate_single(parameters, opacities);
-                frame_data.art_mesh_data[ind] = data;
-                frame_data.art_mesh_draw_orders[ind] =
-                    self.do_interpolate_single(parameters, draw_orders);
+                if self.blend {
+                    for (change, diff) in frame_data.art_mesh_data[ind].iter_mut().zip(data) {
+                        *change += diff;
+                    }
+                } else {
+                    frame_data.art_mesh_data[ind] = data;
+                    frame_data.art_mesh_draw_orders[ind] =
+                        self.do_interpolate_single(parameters, draw_orders);
+                    frame_data.art_mesh_opacities[ind] =
+                        self.do_interpolate_single(parameters, opacities);
+                }
             }
             ApplicatorKind::WarpDeformer(choices, opacities) => {
                 let data = self.do_interpolate(parameters, choices);
