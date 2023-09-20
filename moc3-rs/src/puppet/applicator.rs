@@ -243,7 +243,7 @@ impl ParamApplicator {
                     let mut lowest_weight: f32 = 1.0;
 
                     for constraint in constraints {
-                        lowest_weight = lowest_weight.min(dbg!(constraint.process(parameters)));
+                        lowest_weight = lowest_weight.min(constraint.process(parameters));
                     }
 
                     for (change, diff) in frame_data.art_mesh_data[ind].iter_mut().zip(data) {
