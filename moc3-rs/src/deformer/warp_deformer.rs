@@ -1,5 +1,10 @@
 use glam::{vec2, Vec2};
 
+use crate::math::{
+    lerp::{bilinear_interp, triangular_interp},
+    rescale,
+};
+
 // Live2D deformers are more complex than just a simple interpolation,
 // but not by that much.
 //
@@ -28,44 +33,6 @@ use glam::{vec2, Vec2};
 // In the B case, points are simply bilinearly interpolated again
 // this time between the grid points on the edge or corner, and the points
 // that make a rectangle laying on the outer edge of the C area.
-
-// Traditional bilinear interpolation
-fn bilinear_interp(
-    t: Vec2,
-    bottom_left: Vec2,
-    bottom_right: Vec2,
-    top_left: Vec2,
-    top_right: Vec2,
-) -> Vec2 {
-    let neg = Vec2::ONE - t;
-
-    bottom_left * neg.x * neg.y
-        + bottom_right * t.x * neg.y
-        + top_left * neg.x * t.y
-        + top_right * t.x * t.y
-}
-
-// Barycentric triangular interpolation
-fn triangular_interp(
-    t: Vec2,
-    bottom_left: Vec2,
-    bottom_right: Vec2,
-    top_left: Vec2,
-    top_right: Vec2,
-) -> Vec2 {
-    let neg = Vec2::ONE - t;
-
-    if t.x + t.y > 1.0 {
-        top_right + (top_left - top_right) * neg.x + (bottom_right - top_right) * neg.y
-    } else {
-        bottom_left + (bottom_right - bottom_left) * t.x + (top_left - bottom_left) * t.y
-    }
-}
-
-/// Rescales `t` from `[lower, upper]` to `[0, 1]`
-pub fn rescale(t: f32, lower: f32, upper: f32) -> f32 {
-    (t - lower) / (upper - lower)
-}
 
 // the cases are as follows
 // | 6 | 7 | 8 |

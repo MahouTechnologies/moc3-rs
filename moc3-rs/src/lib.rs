@@ -8,6 +8,7 @@ use thiserror::Error;
 pub mod data;
 pub mod deformer;
 pub mod interpolate;
+mod math;
 pub mod puppet;
 
 #[derive(Error, Debug)]

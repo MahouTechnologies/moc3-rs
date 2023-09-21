@@ -4,8 +4,9 @@ use bytemuck::{cast_slice, cast_vec};
 use glam::{vec2, vec3, Vec2, Vec3};
 
 use crate::{
-    deformer::{rotation_deformer::TransformData, warp_deformer::rescale},
+    deformer::rotation_deformer::TransformData,
     interpolate::{bilinear_interp, linear_interp, trilinear_interp},
+    math::rescale,
 };
 
 use super::PuppetFrameData;
