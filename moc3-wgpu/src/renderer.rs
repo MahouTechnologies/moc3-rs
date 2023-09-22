@@ -7,10 +7,12 @@ use wgpu::{
     *,
 };
 
-use moc3_rs::puppet::{Puppet, PuppetFrameData};
+use moc3_rs::{
+    data::{ArtMeshFlags, BlendMode},
+    puppet::{Puppet, PuppetFrameData},
+};
 
 #[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
-
 struct Uniform {
     pub multiply_color: Vec3,
     pub screen_color: Vec3,
@@ -18,9 +20,12 @@ struct Uniform {
 }
 
 pub struct Renderer {
-    pipeline: RenderPipeline,
+    mesh_flags: Vec<ArtMeshFlags>,
     texture_nums: Vec<u32>,
     render_orders: Vec<u32>,
+
+    // blend mode first, then double-sided
+    pipeline: [[RenderPipeline; 3]; 2],
 
     bound_textures: Vec<BindGroup>,
     uniform_bind_group: BindGroup,
@@ -64,27 +69,21 @@ impl Renderer {
         }
     }
 
-    pub fn render(
-        &mut self,
-        view: &TextureView,
-        encoder: &mut CommandEncoder,
-        frame_data: &PuppetFrameData,
-    ) {
+    pub fn render(&mut self, view: &TextureView, encoder: &mut CommandEncoder) {
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
             color_attachments: &[Some(RenderPassColorAttachment {
                 view,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(Color::BLACK),
+                    load: LoadOp::Clear(Color::TRANSPARENT),
                     store: true,
                 },
             })],
             depth_stencil_attachment: None,
             label: None,
         });
-        rpass.set_pipeline(&self.pipeline);
 
-        for i in frame_data.art_mesh_render_orders.iter().copied() {
+        for i in self.render_orders.iter().copied() {
             rpass.set_bind_group(
                 0,
                 &self.uniform_bind_group,
@@ -92,6 +91,11 @@ impl Renderer {
             );
 
             let i = i as usize;
+            let flags = self.mesh_flags[i];
+            rpass.set_pipeline(
+                &self.pipeline[flags.double_sided() as usize][flags.blend_mode() as usize],
+            );
+
             rpass.set_bind_group(1, &self.bound_textures[self.texture_nums[i] as usize], &[]);
             rpass.set_index_buffer(self.index_buffers[i].slice(..), IndexFormat::Uint16);
             rpass.set_vertex_buffer(0, self.vertex_buffers[i].slice(..));
@@ -210,7 +214,60 @@ pub fn new_renderer(
         ..PipelineLayoutDescriptor::default()
     });
 
-    let pipeline = pipeline_for(device, None, &pipeline_layout, format);
+    let pipeline = [
+        [
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Normal,
+                false,
+            ),
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Additive,
+                false,
+            ),
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Multiplicative,
+                false,
+            ),
+        ],
+        [
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Normal,
+                true,
+            ),
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Additive,
+                true,
+            ),
+            pipeline_for(
+                device,
+                None,
+                &pipeline_layout,
+                format,
+                BlendMode::Multiplicative,
+                true,
+            ),
+        ],
+    ];
 
     let camera_buffer = device.create_buffer(&BufferDescriptor {
         size: std::mem::size_of::<Mat4>() as u64,
@@ -280,9 +337,11 @@ pub fn new_renderer(
     }
 
     Renderer {
-        pipeline,
+        mesh_flags: puppet.art_mesh_flags.clone(),
         texture_nums: puppet.art_mesh_textures.clone(),
         render_orders: vec![0; puppet.art_mesh_count as usize],
+
+        pipeline,
 
         bound_textures,
         uniform_bind_group,
@@ -302,6 +361,8 @@ fn pipeline_for(
     label: Label<'_>,
     layout: &PipelineLayout,
     texture_format: TextureFormat,
+    blend_mode: BlendMode,
+    double_sided: bool,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label,
@@ -311,7 +372,33 @@ fn pipeline_for(
             entry_point: "fs_main",
             targets: &[Some(ColorTargetState {
                 format: texture_format,
-                blend: Some(BlendState::ALPHA_BLENDING),
+                blend: Some(match blend_mode {
+                    BlendMode::Normal => BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                    BlendMode::Additive => BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::Zero,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                    },
+                    BlendMode::Multiplicative => BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::Dst,
+                            dst_factor: BlendFactor::OneMinusSrcAlpha,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::Zero,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                    },
+                }),
                 write_mask: ColorWrites::ALL,
             })],
         }),
@@ -333,7 +420,7 @@ fn pipeline_for(
         },
         primitive: PrimitiveState {
             front_face: FrontFace::Cw,
-            cull_mode: None,
+            cull_mode: if double_sided { None } else { Some(Face::Back) },
             ..PrimitiveState::default()
         },
         depth_stencil: None,

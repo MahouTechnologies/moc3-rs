@@ -9,7 +9,7 @@ use glam::{vec2, vec3, Vec2, Vec3};
 use indextree::{Arena, NodeId};
 
 use crate::{
-    data::{DrawOrderGroupObjectType, Moc3Data, ParameterType, Version},
+    data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3Data, ParameterType, Version},
     deformer::{
         glue::apply_glue,
         rotation_deformer::{apply_rotation_deformer, TransformData},
@@ -40,6 +40,8 @@ pub struct Puppet {
     pub art_mesh_uvs: Vec<Vec<Vec2>>,
     pub art_mesh_indices: Vec<Vec<u16>>,
     pub art_mesh_textures: Vec<u32>,
+    pub art_mesh_flags: Vec<ArtMeshFlags>,
+
     pub vertexes_count: Vec<u32>,
 
     pub draw_order_nodes: Arena<DrawOrderNode>,
@@ -75,12 +77,13 @@ impl BlendColor {
 
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
-    pub art_mesh_data: Vec<Vec<Vec2>>,
     pub art_mesh_render_orders: Vec<u32>,
     pub art_mesh_draw_orders: Vec<f32>,
 
     pub warp_deformer_data: Vec<Vec<Vec2>>,
     pub rotation_deformer_data: Vec<TransformData>,
+    pub art_mesh_data: Vec<Vec<Vec2>>,
+
     pub deformer_scale_data: Vec<f32>,
 
     pub warp_deformer_opacities: Vec<f32>,
@@ -1060,6 +1063,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         art_mesh_count: read.table.count_info.art_meshes,
         art_mesh_indices,
         art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
+        art_mesh_flags: read.table.art_meshes.art_mesh_flags.clone(),
         art_mesh_uvs,
         vertexes_count: read.table.art_meshes.vertex_counts.clone(),
 

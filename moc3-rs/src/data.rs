@@ -170,7 +170,7 @@ pub struct RotationDeformerOffsets {
     pub base_angles: FilePtr32<Vec<f32>>,
 }
 
-#[derive(BitfieldSpecifier, Debug)]
+#[derive(BitfieldSpecifier, Debug, Clone, Copy, PartialEq, Eq)]
 #[bits = 2]
 pub enum BlendMode {
     Normal = 0,
@@ -179,7 +179,7 @@ pub enum BlendMode {
 }
 
 #[bitfield(filled = false)]
-#[derive(BinRead, Debug, Default)]
+#[derive(BinRead, Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[br(try_map = Self::from_bytes)]
 pub struct ArtMeshFlags {
     pub blend_mode: BlendMode,

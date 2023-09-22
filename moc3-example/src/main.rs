@@ -37,6 +37,17 @@ fn main() {
         art_mesh_opacities: vec![1.0; read.table.count_info.art_meshes as usize],
         warp_deformer_opacities: vec![1.0; read.table.count_info.warp_deformers as usize],
         rotation_deformer_opacities: vec![1.0; read.table.count_info.rotation_deformers as usize],
+
+        art_mesh_colors: vec![Default::default(); read.table.count_info.art_meshes as usize],
+        rotation_deformer_colors: vec![
+            Default::default();
+            read.table.count_info.rotation_deformers as usize
+        ],
+        warp_deformer_colors: vec![
+            Default::default();
+            read.table.count_info.warp_deformers as usize
+        ],
+
         glue_data,
     };
 
@@ -50,6 +61,7 @@ pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
     let window = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(1000, 1000))
         .with_resizable(false)
+        .with_transparent(true)
         .build(&event_loop)
         .unwrap();
 
@@ -104,7 +116,7 @@ pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
             renderer.prepare(&device, &queue, &frame_data);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            renderer.render(&view, &mut encoder, &frame_data);
+            renderer.render(&view, &mut encoder);
             queue.submit(std::iter::once(encoder.finish()));
 
             output.present();
