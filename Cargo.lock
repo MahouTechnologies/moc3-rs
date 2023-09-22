@@ -447,7 +447,7 @@ checksum = "8fce2eeef77fd4a293a54b62aa00ac9daebfbcda4bf8998c5a815635b004aa1c"
 dependencies = [
  "const_panic",
  "encase_derive",
- "glam 0.24.1",
+ "glam",
  "thiserror",
 ]
 
@@ -607,15 +607,6 @@ name = "gimli"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
-
-[[package]]
-name = "glam"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e4afd9ad95555081e109fe1d21f2a30c691b5f0919c67dfa690a2e1eb6bd51c"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "glam"
@@ -986,6 +977,7 @@ name = "moc3-example"
 version = "0.1.0"
 dependencies = [
  "binrw",
+ "glam",
  "image",
  "moc3-rs",
  "moc3-wgpu",
@@ -1000,7 +992,7 @@ version = "0.1.0"
 dependencies = [
  "binrw",
  "bytemuck",
- "glam 0.23.0",
+ "glam",
  "indextree",
  "modular-bitfield",
  "serde",
@@ -1013,7 +1005,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "encase",
- "glam 0.24.1",
+ "glam",
  "image",
  "moc3-rs",
  "wgpu",

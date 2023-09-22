@@ -4,7 +4,8 @@ mod node;
 
 use std::{mem::discriminant, slice};
 
-use glam::{vec2, Vec2};
+use bytemuck::{Pod, Zeroable};
+use glam::{vec2, vec3, Vec2, Vec3};
 use indextree::{Arena, NodeId};
 
 use crate::{
@@ -46,18 +47,50 @@ pub struct Puppet {
     pub max_draw_order_children: u32,
 }
 
+#[derive(Pod, Zeroable, Debug, Clone, Copy)]
+#[repr(C)]
+pub struct BlendColor {
+    pub multiply_color: Vec3,
+    pub screen_color: Vec3,
+}
+
+impl Default for BlendColor {
+    fn default() -> Self {
+        Self {
+            multiply_color: Vec3::ONE,
+            screen_color: Vec3::ZERO,
+        }
+    }
+}
+
+impl BlendColor {
+    pub fn blend(&self, child: &BlendColor) -> BlendColor {
+        Self {
+            multiply_color: self.multiply_color * child.multiply_color,
+            screen_color: (self.screen_color + child.screen_color)
+                - (self.screen_color * child.screen_color),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
     pub art_mesh_data: Vec<Vec<Vec2>>,
-    pub art_mesh_draw_orders: Vec<f32>,
     pub art_mesh_render_orders: Vec<u32>,
-    pub art_mesh_opacities: Vec<f32>,
+    pub art_mesh_draw_orders: Vec<f32>,
 
     pub warp_deformer_data: Vec<Vec<Vec2>>,
     pub rotation_deformer_data: Vec<TransformData>,
     pub deformer_scale_data: Vec<f32>,
+
     pub warp_deformer_opacities: Vec<f32>,
     pub rotation_deformer_opacities: Vec<f32>,
+    pub art_mesh_opacities: Vec<f32>,
+
+    pub warp_deformer_colors: Vec<BlendColor>,
+    pub rotation_deformer_colors: Vec<BlendColor>,
+    pub art_mesh_colors: Vec<BlendColor>,
+
     pub glue_data: Vec<f32>,
 }
 
@@ -70,9 +103,14 @@ impl Puppet {
         let art_mesh_ptr = frame_data.art_mesh_data.as_mut_ptr();
         let warp_deformer_ptr = frame_data.warp_deformer_data.as_mut_ptr();
         let rotation_deformer_ptr = frame_data.rotation_deformer_data.as_mut_ptr();
+
         let art_mesh_opacity_ptr = frame_data.art_mesh_opacities.as_mut_ptr();
         let warp_deformer_opacity_ptr = frame_data.warp_deformer_opacities.as_mut_ptr();
         let rotation_deformer_opacity_ptr = frame_data.rotation_deformer_opacities.as_mut_ptr();
+
+        let art_mesh_color_ptr = frame_data.art_mesh_colors.as_mut_ptr();
+        let warp_deformer_color_ptr = frame_data.warp_deformer_colors.as_mut_ptr();
+        let rotation_deformer_color_ptr = frame_data.rotation_deformer_colors.as_mut_ptr();
 
         for root in &self.node_roots {
             for child_id in root.descendants(&self.nodes).skip(1) {
@@ -90,13 +128,14 @@ impl Puppet {
                     (discriminant(&parent.data), parent.broad_index),
                 );
 
-                let (child_changes, child_opacity) = match &child.data {
+                let (child_changes, child_opacity, child_color) = match &child.data {
                     // Safety: We ensure above that we will not have overlapping references.
                     node::NodeKind::ArtMesh(_) => unsafe {
                         let vec_data = &mut *art_mesh_ptr.add(child.broad_index as usize);
                         (
                             vec_data.as_mut_slice(),
                             &mut *art_mesh_opacity_ptr.add(child.broad_index as usize),
+                            &mut *art_mesh_color_ptr.add(child.broad_index as usize),
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
@@ -107,6 +146,7 @@ impl Puppet {
                         (
                             vec_data.as_mut_slice(),
                             &mut *warp_deformer_opacity_ptr.add(*ind as usize),
+                            &mut *warp_deformer_color_ptr.add(*ind as usize),
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
@@ -124,12 +164,13 @@ impl Puppet {
                         (
                             slice_data,
                             &mut *rotation_deformer_opacity_ptr.add(*ind as usize),
+                            &mut *rotation_deformer_color_ptr.add(child.broad_index as usize),
                         )
                     },
                 };
 
                 // Apply the parent deformer to the child deformer or underlying art mesh.
-                let parent_opacity = match &parent.data {
+                let (parent_opacity, parent_color) = match &parent.data {
                     node::NodeKind::ArtMesh(_) => {
                         unreachable!("art mesh should not have children")
                     }
@@ -145,19 +186,26 @@ impl Puppet {
                         );
 
                         // Safety: we guarantee above this will not overlap
-                        unsafe { *warp_deformer_opacity_ptr.add(*ind as usize) }
+                        (
+                            unsafe { *warp_deformer_opacity_ptr.add(*ind as usize) },
+                            unsafe { *warp_deformer_color_ptr.add(*ind as usize) },
+                        )
                     }
                     node::NodeKind::RotationDeformer(data, ind) => {
                         let transform = unsafe { &*rotation_deformer_ptr.add(*ind as usize) };
                         apply_rotation_deformer(transform, data.base_angle, child_changes);
 
                         // Safety: we guarantee above this will not overlap
-                        unsafe { *rotation_deformer_opacity_ptr.add(*ind as usize) }
+                        (
+                            unsafe { *rotation_deformer_opacity_ptr.add(*ind as usize) },
+                            unsafe { *rotation_deformer_color_ptr.add(*ind as usize) },
+                        )
                     }
                 };
 
                 // Propogate down the opacity numbers
                 *child_opacity *= parent_opacity;
+                *child_color = parent_color.blend(&child_color);
             }
         }
 
@@ -308,6 +356,7 @@ fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>)
                         positions_to_bind,
                         opacities_to_bind,
                         draw_orders_to_bind,
+                        Vec::new(),
                     ),
                     x: Some(x),
                     y: None,
@@ -381,7 +430,11 @@ fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>)
 
                 applicators.push(ParamApplicator {
                     kind_index: i as u32,
-                    values: ApplicatorKind::WarpDeformer(positions_to_bind, opacities_to_bind),
+                    values: ApplicatorKind::WarpDeformer(
+                        positions_to_bind,
+                        opacities_to_bind,
+                        Vec::new(),
+                    ),
                     x: Some(x),
                     y: None,
                     z: None,
@@ -396,9 +449,34 @@ fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>)
     }
 }
 
+fn collect_colors_to_bind(read: &Moc3Data, colors_start: usize, count: usize) -> Vec<BlendColor> {
+    let keyform_multiply_colors = read.table.keyform_multiply_colors.as_ref().unwrap();
+    let keyform_screen_colors = read.table.keyform_screen_colors.as_ref().unwrap();
+
+    let mut ret = Vec::with_capacity(count);
+
+    for i in colors_start..colors_start + count {
+        let multiply_color = vec3(
+            keyform_multiply_colors.red[i],
+            keyform_multiply_colors.green[i],
+            keyform_multiply_colors.blue[i],
+        );
+
+        let screen_color = vec3(
+            keyform_screen_colors.red[i],
+            keyform_screen_colors.green[i],
+            keyform_screen_colors.blue[i],
+        );
+        ret.push(BlendColor {
+            multiply_color,
+            screen_color,
+        });
+    }
+    ret
+}
+
 pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let art_meshes = &read.table.art_meshes;
-    let art_mesh_keyforms = &read.table.art_mesh_keyforms;
     let parameters = &read.table.parameters;
     let parameter_bindings = &read.table.parameter_bindings;
     let parameter_binding_indices = &read.table.parameter_binding_indices;
@@ -450,8 +528,10 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let deformers = &read.table.deformers;
     let warp_deformers = &read.table.warp_deformers;
     let warp_deformer_keyforms = &read.table.warp_deformer_keyforms;
+    let warp_deformer_keyforms_v402 = read.table.warp_deformer_keyforms_v402.as_ref();
     let rotation_deformers = &read.table.rotation_deformers;
     let rotation_deformer_keyforms = &read.table.rotation_deformer_keyforms;
+    let rotation_deformer_keyforms_v402 = read.table.rotation_deformer_keyforms_v402.as_ref();
 
     // Everything down from here, delimited by horizontal ASCII lines, represents all of the possible
     // things that can affect the final model directly. This includes deformers (both rotation and warp),
@@ -520,6 +600,15 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                     .push(positions[position_start..position_start + vertexes].to_owned());
             }
             let opacities_to_bind = warp_deformer_keyforms.opacities[start..start + count].to_vec();
+            let colors_to_bind =
+                if let Some(warp_deformer_keyforms_v402) = warp_deformer_keyforms_v402 {
+                    let colors_start =
+                        warp_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+
+                    collect_colors_to_bind(read, colors_start, count)
+                } else {
+                    Vec::new()
+                };
 
             let parameter_bindings_count =
                 keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
@@ -569,7 +658,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
             applicators.push(ParamApplicator {
                 kind_index: deformers.specific_sources_indices[i],
-                values: ApplicatorKind::WarpDeformer(positions_to_bind, opacities_to_bind),
+                values: ApplicatorKind::WarpDeformer(
+                    positions_to_bind,
+                    opacities_to_bind,
+                    colors_to_bind,
+                ),
                 x: x_index,
                 y: y_index,
                 z: z_index,
@@ -622,6 +715,15 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             }
             let opacities_to_bind =
                 rotation_deformer_keyforms.opacities[start..start + count].to_vec();
+            let colors_to_bind =
+                if let Some(rotation_deformer_keyforms_v402) = rotation_deformer_keyforms_v402 {
+                    let colors_start =
+                        rotation_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+
+                    collect_colors_to_bind(read, colors_start, count)
+                } else {
+                    Vec::new()
+                };
 
             let parameter_bindings_count =
                 keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
@@ -671,7 +773,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
             applicators.push(ParamApplicator {
                 kind_index: deformers.specific_sources_indices[i],
-                values: ApplicatorKind::RotationDeformer(positions_to_bind, opacities_to_bind),
+                values: ApplicatorKind::RotationDeformer(
+                    positions_to_bind,
+                    opacities_to_bind,
+                    colors_to_bind,
+                ),
                 x: x_index,
                 y: y_index,
                 z: z_index,
@@ -684,6 +790,9 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let vertex_indices = read.vertex_indices();
     let mut art_mesh_uvs = Vec::with_capacity(read.table.count_info.art_meshes as usize);
     let mut art_mesh_indices = Vec::with_capacity(read.table.count_info.art_meshes as usize);
+    let art_mesh_keyforms = &read.table.art_mesh_keyforms;
+    let art_mesh_deformer_keyforms_v402 = read.table.art_mesh_deformer_keyforms_v402.as_ref();
+
     for i in 0..read.table.count_info.art_meshes {
         let i = i as usize;
         let uv_start = art_meshes.uv_sources_starts[i] as usize / 2;
@@ -704,6 +813,15 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         }
         let opacities_to_bind = art_mesh_keyforms.opacities[start..start + count].to_vec();
         let draw_orders_to_bind = art_mesh_keyforms.draw_orders[start..start + count].to_vec();
+        let colors_to_bind =
+            if let Some(art_mesh_deformer_keyforms_v402) = art_mesh_deformer_keyforms_v402 {
+                let colors_start =
+                    art_mesh_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+
+                collect_colors_to_bind(read, colors_start, count)
+            } else {
+                Vec::new()
+            };
 
         {
             let parent_deformer_index = art_meshes.parent_deformer_indices[i];
@@ -780,6 +898,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 positions_to_bind,
                 opacities_to_bind,
                 draw_orders_to_bind,
+                colors_to_bind,
             ),
             x: x_index,
             y: y_index,

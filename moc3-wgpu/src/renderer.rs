@@ -49,8 +49,8 @@ impl Renderer {
 
         for i in 0..self.texture_nums.len() {
             let uniform = Uniform {
-                multiply_color: Vec3::ONE,
-                screen_color: Vec3::ZERO,
+                multiply_color: frame_data.art_mesh_colors[i].multiply_color,
+                screen_color: frame_data.art_mesh_colors[i].screen_color,
                 opacity: frame_data.art_mesh_opacities[i],
             };
 
@@ -332,6 +332,7 @@ fn pipeline_for(
             ],
         },
         primitive: PrimitiveState {
+            front_face: FrontFace::Cw,
             cull_mode: None,
             ..PrimitiveState::default()
         },

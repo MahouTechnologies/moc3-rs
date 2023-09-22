@@ -19,5 +19,9 @@ var texture_sampler : sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(texture, texture_sampler, in.uv) * data.opacity;
+    let tex = textureSample(texture, texture_sampler, in.uv);
+    var color = tex.rgb * data.multiply_color;
+    color = (tex.rgb + data.screen_color) - (tex.rgb * data.screen_color);
+
+    return vec4(color, tex.a);
 }

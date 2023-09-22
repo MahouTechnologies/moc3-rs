@@ -382,7 +382,7 @@ pub struct WarpDeformerKeyformOffsetsV303 {
 })]
 pub struct WarpDeformerKeyformOffsetsV402 {
     #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
 }
 
 #[derive(BinRead, Debug)]
@@ -412,7 +412,7 @@ pub struct RotationDeformerKeyformOffsets {
 })]
 pub struct RotationDeformerKeyformOffsetsV402 {
     #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
 }
 
 #[derive(BinRead, Debug)]
@@ -434,7 +434,7 @@ pub struct ArtMeshKeyformOffsets {
 })]
 pub struct ArtMeshKeyformOffsetsV402 {
     #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_begin: FilePtr32<Vec<u32>>,
+    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
 }
 
 #[derive(BinRead, Debug)]
