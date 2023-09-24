@@ -171,6 +171,8 @@ impl ParamApplicator {
                             cast_slice_mut(slice::from_mut(&mut frame_data.art_mesh_colors[ind])),
                             |a| cast_slice(slice::from_ref(&colors[a])),
                         );
+                    } else {
+                        frame_data.art_mesh_colors[ind] = BlendColor::default();
                     }
                 }
             }
@@ -196,6 +198,8 @@ impl ParamApplicator {
                         cast_slice_mut(slice::from_mut(&mut frame_data.warp_deformer_colors[ind])),
                         |a| cast_slice(slice::from_ref(&colors[a])),
                     );
+                } else {
+                    frame_data.warp_deformer_colors[ind] = BlendColor::default();
                 }
             }
             ApplicatorKind::RotationDeformer(choices, opacities, colors) => {
@@ -222,6 +226,8 @@ impl ParamApplicator {
                         )),
                         |a| cast_slice(slice::from_ref(&colors[a])),
                     );
+                } else {
+                    frame_data.rotation_deformer_colors[ind] = BlendColor::default();
                 }
             }
             ApplicatorKind::Glue(intensities) => {
