@@ -24,5 +24,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     color = (tex.rgb + data.screen_color) - (tex.rgb * data.screen_color);
     color *= tex.a;
 
-    return vec4(color, tex.a);
+    return vec4(color, tex.a) * data.opacity;
 }
