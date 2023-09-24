@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use indextree::{Arena, NodeId};
 
 use super::PuppetFrameData;
@@ -27,7 +29,7 @@ fn draw_order_tree_rec(
 
         match data {
             DrawOrderNode::ArtMesh { index } => {
-                orders.push((frame_data.art_mesh_draw_orders[*index as usize], i));
+                orders.push((frame_data.art_mesh_draw_orders[*index as usize].round(), i));
             }
             DrawOrderNode::Part { .. } => {
                 // I haven't done parts yet
@@ -35,7 +37,14 @@ fn draw_order_tree_rec(
             }
         }
     }
-    orders.sort_by(|a, b| a.0.total_cmp(&b.0));
+    orders.sort_unstable_by(|a, b| {
+        let first = a.0.total_cmp(&b.0);
+        if first == Ordering::Equal {
+            a.1.cmp(&b.1)
+        } else {
+            first
+        }
+    });
 
     for (_, id) in orders {
         let child = draw_order_nodes[id].get();
