@@ -18,7 +18,7 @@ fn main() {
     drop(read);
 
     let frame_data = framedata_for_puppet(&puppet);
-    
+
     pollster::block_on(run(puppet, frame_data));
 }
 

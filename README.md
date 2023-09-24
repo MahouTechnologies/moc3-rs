@@ -8,8 +8,8 @@ ground-up reimplementation of the core.
 ## Status
 
 Currently, the implementation is targetting moc3 version 4.2, and is most of
-the way there. It is currently missing part support as well as art mesh masks.
-The implementation is also not fully optimized at the current time.
+the way there. It is currently missing part support. The implementation is also
+not fully optimized, but can be considered usable.
 
 ## Goal
 
