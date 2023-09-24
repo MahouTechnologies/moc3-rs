@@ -81,7 +81,7 @@ pub async fn run(puppet: Puppet, mut frame_data: PuppetFrameData) {
 
             puppet.update(&params, &mut frame_data);
 
-            renderer.prepare(&device, &queue, &frame_data);
+            renderer.prepare(&device, &queue, output.texture.size(), &frame_data);
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             renderer.render(&view, &mut encoder);

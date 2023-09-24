@@ -23,9 +23,12 @@ pub struct Renderer {
     mesh_flags: Vec<ArtMeshFlags>,
     texture_nums: Vec<u32>,
     render_orders: Vec<u32>,
+    mask_indices: Vec<Vec<u32>>,
 
     // blend mode first, then double-sided
     pipeline: [[RenderPipeline; 3]; 2],
+    // just double-sided here
+    mask_pipeline: [RenderPipeline; 2],
 
     bound_textures: Vec<BindGroup>,
     uniform_bind_group: BindGroup,
@@ -37,10 +40,38 @@ pub struct Renderer {
     uv_buffers: Vec<Buffer>,
     index_buffers: Vec<Buffer>,
     vertex_buffers: Vec<Buffer>,
+
+    mask_stencil: Option<Texture>,
 }
 
 impl Renderer {
-    pub fn prepare(&mut self, _device: &Device, queue: &Queue, frame_data: &PuppetFrameData) {
+    pub fn prepare(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        render_size: Extent3d,
+        frame_data: &PuppetFrameData,
+    ) {
+        if let Some(texture) = &mut self.mask_stencil {
+            if texture.size() != render_size {
+                self.mask_stencil = None;
+            }
+        }
+
+        self.mask_stencil.get_or_insert_with(|| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                size: render_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+                label: None,
+            })
+        });
+
         self.render_orders[..].copy_from_slice(&frame_data.art_mesh_render_orders);
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
@@ -70,6 +101,12 @@ impl Renderer {
     }
 
     pub fn render(&mut self, view: &TextureView, encoder: &mut CommandEncoder) {
+        let mask_view = self
+            .mask_stencil
+            .as_ref()
+            .unwrap()
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
             color_attachments: &[Some(RenderPassColorAttachment {
                 view,
@@ -79,29 +116,77 @@ impl Renderer {
                     store: true,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: &mask_view,
+                depth_ops: None,
+                stencil_ops: Some(Operations {
+                    load: LoadOp::Clear(0),
+                    store: true,
+                }),
+            }),
             label: None,
         });
 
-        for i in self.render_orders.iter().copied() {
-            rpass.set_bind_group(
-                0,
-                &self.uniform_bind_group,
-                &[self.uniform_alignment_needed as u32 * i],
-            );
+        for art_index in self.render_orders.iter().copied() {
+            let art_index = art_index as usize;
+            let flags = self.mesh_flags[art_index];
 
-            let i = i as usize;
-            let flags = self.mesh_flags[i];
+            if self.mask_indices[art_index].is_empty() {
+                rpass.set_stencil_reference(0);
+            } else {
+                rpass.set_stencil_reference(1);
+
+                for mask_index in self.mask_indices[art_index].iter().copied() {
+                    let mask_index = mask_index as usize;
+                    let mask_flags = self.mesh_flags[mask_index];
+
+                    rpass.set_pipeline(&self.mask_pipeline[mask_flags.double_sided() as usize]);
+
+                    rpass.set_bind_group(
+                        0,
+                        &self.uniform_bind_group,
+                        &[self.uniform_alignment_needed as u32 * mask_index as u32],
+                    );
+                    rpass.set_bind_group(
+                        1,
+                        &self.bound_textures[self.texture_nums[mask_index] as usize],
+                        &[],
+                    );
+                    rpass.set_index_buffer(
+                        self.index_buffers[mask_index].slice(..),
+                        IndexFormat::Uint16,
+                    );
+                    rpass.set_vertex_buffer(0, self.vertex_buffers[mask_index].slice(..));
+                    rpass.set_vertex_buffer(1, self.uv_buffers[mask_index].slice(..));
+
+                    let x = self.index_buffers[mask_index].size() / 2;
+                    rpass.draw_indexed(0..(x as u32), 0, 0..1);
+                }
+
+                if flags.inverted() {
+                    rpass.set_stencil_reference(0);
+                }
+            }
+
             rpass.set_pipeline(
                 &self.pipeline[flags.double_sided() as usize][flags.blend_mode() as usize],
             );
 
-            rpass.set_bind_group(1, &self.bound_textures[self.texture_nums[i] as usize], &[]);
-            rpass.set_index_buffer(self.index_buffers[i].slice(..), IndexFormat::Uint16);
-            rpass.set_vertex_buffer(0, self.vertex_buffers[i].slice(..));
-            rpass.set_vertex_buffer(1, self.uv_buffers[i].slice(..));
+            rpass.set_bind_group(
+                0,
+                &self.uniform_bind_group,
+                &[self.uniform_alignment_needed as u32 * art_index as u32],
+            );
+            rpass.set_bind_group(
+                1,
+                &self.bound_textures[self.texture_nums[art_index] as usize],
+                &[],
+            );
+            rpass.set_index_buffer(self.index_buffers[art_index].slice(..), IndexFormat::Uint16);
+            rpass.set_vertex_buffer(0, self.vertex_buffers[art_index].slice(..));
+            rpass.set_vertex_buffer(1, self.uv_buffers[art_index].slice(..));
 
-            let x = self.index_buffers[i].size() / 2;
+            let x = self.index_buffers[art_index].size() / 2;
             rpass.draw_indexed(0..(x as u32), 0, 0..1);
         }
     }
@@ -221,24 +306,24 @@ pub fn new_renderer(
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Normal,
                 false,
+                PipelineKind::Render(BlendMode::Normal),
             ),
             pipeline_for(
                 device,
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Additive,
                 false,
+                PipelineKind::Render(BlendMode::Additive),
             ),
             pipeline_for(
                 device,
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Multiplicative,
                 false,
+                PipelineKind::Render(BlendMode::Multiplicative),
             ),
         ],
         [
@@ -247,26 +332,45 @@ pub fn new_renderer(
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Normal,
                 true,
+                PipelineKind::Render(BlendMode::Normal),
             ),
             pipeline_for(
                 device,
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Additive,
                 true,
+                PipelineKind::Render(BlendMode::Additive),
             ),
             pipeline_for(
                 device,
                 None,
                 &pipeline_layout,
                 format,
-                BlendMode::Multiplicative,
                 true,
+                PipelineKind::Render(BlendMode::Multiplicative),
             ),
         ],
+    ];
+
+    let mask_pipeline = [
+        pipeline_for(
+            device,
+            None,
+            &pipeline_layout,
+            format,
+            false,
+            PipelineKind::Mask,
+        ),
+        pipeline_for(
+            device,
+            None,
+            &pipeline_layout,
+            format,
+            true,
+            PipelineKind::Mask,
+        ),
     ];
 
     let camera_buffer = device.create_buffer(&BufferDescriptor {
@@ -340,8 +444,10 @@ pub fn new_renderer(
         mesh_flags: puppet.art_mesh_flags.clone(),
         texture_nums: puppet.art_mesh_textures.clone(),
         render_orders: vec![0; puppet.art_mesh_count as usize],
+        mask_indices: puppet.art_mesh_mask_indices.clone(),
 
         pipeline,
+        mask_pipeline,
 
         bound_textures,
         uniform_bind_group,
@@ -353,7 +459,14 @@ pub fn new_renderer(
         uv_buffers,
         index_buffers,
         vertex_buffers,
+
+        mask_stencil: None,
     }
+}
+
+enum PipelineKind {
+    Render(BlendMode),
+    Mask,
 }
 
 fn pipeline_for(
@@ -361,45 +474,79 @@ fn pipeline_for(
     label: Label<'_>,
     layout: &PipelineLayout,
     texture_format: TextureFormat,
-    blend_mode: BlendMode,
     double_sided: bool,
+    kind: PipelineKind,
 ) -> RenderPipeline {
+    let face_state = match kind {
+        PipelineKind::Render(_) => StencilFaceState {
+            compare: CompareFunction::Equal,
+            fail_op: StencilOperation::Zero,
+            depth_fail_op: StencilOperation::Zero,
+            pass_op: StencilOperation::Zero,
+        },
+        PipelineKind::Mask => StencilFaceState {
+            compare: CompareFunction::Always,
+            fail_op: StencilOperation::Replace,
+            depth_fail_op: StencilOperation::Replace,
+            pass_op: StencilOperation::Replace,
+        },
+    };
+
+    let stencil = StencilState {
+        front: face_state,
+        back: face_state,
+        read_mask: 0xff,
+        write_mask: 0xff,
+    };
+
+    let (blend, write_mask) = match kind {
+        PipelineKind::Render(blend_mode) => {
+            let blend = match blend_mode {
+                BlendMode::Normal => BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                BlendMode::Additive => BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::Zero,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                },
+                BlendMode::Multiplicative => BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::Dst,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::Zero,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                },
+            };
+
+            (Some(blend), ColorWrites::ALL)
+        }
+        PipelineKind::Mask => (None, ColorWrites::empty()),
+    };
+
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label,
         layout: Some(layout),
         fragment: Some(FragmentState {
-            module: &device.create_shader_module(include_wgsl!("./shader/frag.wgsl")),
+            module: &device.create_shader_module(match kind {
+                PipelineKind::Render(_) => include_wgsl!("./shader/frag.wgsl"),
+                PipelineKind::Mask => include_wgsl!("./shader/mask.frag.wgsl"),
+            }),
             entry_point: "fs_main",
             targets: &[Some(ColorTargetState {
                 format: texture_format,
-                blend: Some(match blend_mode {
-                    BlendMode::Normal => BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-                    BlendMode::Additive => BlendState {
-                        color: BlendComponent {
-                            src_factor: BlendFactor::One,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                        alpha: BlendComponent {
-                            src_factor: BlendFactor::Zero,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                    },
-                    BlendMode::Multiplicative => BlendState {
-                        color: BlendComponent {
-                            src_factor: BlendFactor::Dst,
-                            dst_factor: BlendFactor::OneMinusSrcAlpha,
-                            operation: BlendOperation::Add,
-                        },
-                        alpha: BlendComponent {
-                            src_factor: BlendFactor::Zero,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                    },
-                }),
-                write_mask: ColorWrites::ALL,
+                blend,
+                write_mask,
             })],
         }),
         vertex: VertexState {
@@ -423,7 +570,13 @@ fn pipeline_for(
             cull_mode: if double_sided { None } else { Some(Face::Back) },
             ..PrimitiveState::default()
         },
-        depth_stencil: None,
+        depth_stencil: Some(DepthStencilState {
+            format: TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: false,
+            depth_compare: CompareFunction::Always,
+            stencil,
+            bias: DepthBiasState::default(),
+        }),
         multisample: MultisampleState::default(),
         multiview: None,
     })

@@ -52,6 +52,7 @@ pub struct Puppet {
     pub art_mesh_indices: Vec<Vec<u16>>,
     pub art_mesh_textures: Vec<u32>,
     pub art_mesh_flags: Vec<ArtMeshFlags>,
+    pub art_mesh_mask_indices: Vec<Vec<u32>>,
     pub art_mesh_vertexes: Vec<u32>,
 
     pub draw_order_nodes: Arena<DrawOrderNode>,
@@ -741,8 +742,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let vertex_indices = read.vertex_indices();
     let mut art_mesh_uvs = Vec::with_capacity(read.table.count_info.art_meshes as usize);
     let mut art_mesh_indices = Vec::with_capacity(read.table.count_info.art_meshes as usize);
+    let mut art_mesh_mask_indices = Vec::with_capacity(read.table.count_info.art_meshes as usize);
+
     let art_mesh_keyforms = &read.table.art_mesh_keyforms;
     let art_mesh_deformer_keyforms_v402 = read.table.art_mesh_deformer_keyforms_v402.as_ref();
+    let art_mesh_masks = &read.table.art_mesh_masks;
 
     for i in 0..read.table.count_info.art_meshes {
         let i = i as usize;
@@ -752,6 +756,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         let index_count = art_meshes.vertex_index_sources_counts[i] as usize;
         art_mesh_uvs.push(uvs[uv_start..uv_start + vertexes].to_vec());
         art_mesh_indices.push(vertex_indices[index_start..index_start + index_count].to_vec());
+
+        let mask_start = art_meshes.art_mesh_mask_sources_starts[i] as usize;
+        let mask_count = art_meshes.art_mesh_mask_sources_counts[i] as usize;
+        art_mesh_mask_indices.push(
+            art_mesh_masks.art_mesh_source_indices[mask_start..mask_start + mask_count].to_owned(),
+        );
 
         let binding_index = art_meshes.keyform_binding_sources_indices[i] as usize;
         let start = art_meshes.keyform_sources_starts[i] as usize;
@@ -965,6 +975,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         art_mesh_indices,
         art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
         art_mesh_flags: read.table.art_meshes.art_mesh_flags.clone(),
+        art_mesh_mask_indices,
         art_mesh_vertexes: read.table.art_meshes.vertex_counts.clone(),
 
         draw_order_nodes,
