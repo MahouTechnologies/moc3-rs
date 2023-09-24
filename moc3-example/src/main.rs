@@ -15,18 +15,14 @@ fn main() {
     let read: Moc3Data = reader.read_le().unwrap();
 
     let puppet = puppet_from_moc3(&read);
+    drop(read);
 
-    let params = puppet.params.clone();
-    println!("{:?}", params);
-
-    let mut frame_data = framedata_for_puppet(&puppet);
-
-    puppet.update(&params, &mut frame_data);
-
+    let frame_data = framedata_for_puppet(&puppet);
+    
     pollster::block_on(run(puppet, frame_data));
 }
 
-pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
+pub async fn run(puppet: Puppet, mut frame_data: PuppetFrameData) {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(1000, 1000))
@@ -76,12 +72,14 @@ pub async fn run(puppet: Puppet, frame_data: PuppetFrameData) {
         .into_rgba8();
 
     let mut renderer = new_renderer(&puppet, &device, &queue, TextureFormat::Bgra8Unorm, &[img]);
-
+    let mut params = puppet.param_defaults.clone();
     // Somehow the Close button doesn't work... Figure that out
     event_loop.run(move |event, _, _| match event {
         Event::RedrawRequested(_) => {
             let output = surface.get_current_texture().unwrap();
             let view = (output.texture).create_view(&wgpu::TextureViewDescriptor::default());
+
+            puppet.update(&params, &mut frame_data);
 
             renderer.prepare(&device, &queue, &frame_data);
             let mut encoder =

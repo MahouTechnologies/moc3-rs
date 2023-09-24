@@ -33,7 +33,12 @@ pub struct Puppet {
     pub nodes: Arena<DeformerNode>,
     pub glue_nodes: Vec<GlueNode>,
 
-    pub params: Vec<f32>,
+    pub param_ids: Vec<String>,
+    pub param_defaults: Vec<f32>,
+    pub param_maxes: Vec<f32>,
+    pub param_mins: Vec<f32>,
+    pub param_repeats: Vec<bool>,
+    pub param_decimals: Vec<u32>,
     pub applicators: Vec<ParamApplicator>,
 
     pub art_mesh_count: u32,
@@ -115,6 +120,8 @@ impl Puppet {
         for applicator in &self.applicators {
             applicator.apply(&parameter_values, frame_data);
         }
+
+        frame_data.deformer_scale_data.fill(1.0);
 
         let art_mesh_ptr = frame_data.art_mesh_data.as_mut_ptr();
         let warp_deformer_ptr: *mut Vec<Vec2> = frame_data.warp_deformer_data.as_mut_ptr();
@@ -305,7 +312,7 @@ fn collect_blend_shapes(
             let vertexes = art_meshes.vertex_counts[target_index] as usize;
             let start =
                 blend_shape_art_meshes.blend_shape_keyform_binding_sources_starts[i] as usize;
-            let count =
+            let count: usize =
                 blend_shape_art_meshes.blend_shape_keyform_binding_sources_counts[i] as usize;
 
             for a in start..start + count {
@@ -915,15 +922,23 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     // Here we parse all of the data related to parameters onto the puppet. Right now,
     // only the default value is saved, but this will be filled with all of the other data
     // in the future.
-    let mut params = Vec::with_capacity(read.table.count_info.parameters as usize);
-    for i in 0..read.table.count_info.parameters {
-        let i = i as usize;
-        params.push(parameters.default_values[i]);
-    }
 
     let mut warp_deformer_grid_count = Vec::new();
     for i in 0..read.table.count_info.warp_deformers as usize {
-        warp_deformer_grid_count.push(warp_deformers.rows[i] * warp_deformers.columns[i]);
+        // Fencepost error warning: rows and columns measure the user-visbile middle, not the edges
+        // containg the numbers.
+        warp_deformer_grid_count
+            .push((warp_deformers.rows[i] + 1) * (warp_deformers.columns[i] + 1));
+    }
+
+    let mut param_repeats = Vec::new();
+    for i in parameters.is_repeat.iter() {
+        param_repeats.push(*i == 1);
+    }
+
+    let mut param_ids = Vec::new();
+    for i in parameters.ids.iter() {
+        param_ids.push(i.name.to_string());
     }
 
     Puppet {
@@ -931,11 +946,16 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         nodes: node_arena,
         glue_nodes,
 
-        params,
+        param_ids,
+        param_defaults: parameters.default_values.clone(),
+        param_maxes: parameters.max_values.clone(),
+        param_mins: parameters.min_values.clone(),
+        param_repeats,
+        param_decimals: parameters.decimal_places.clone(),
         applicators,
 
         art_mesh_count: read.table.count_info.art_meshes,
-        warp_deformer_count: read.table.count_info.warp_deformer_keyforms,
+        warp_deformer_count: read.table.count_info.warp_deformers,
         rotation_deformer_count: read.table.count_info.rotation_deformers,
         glue_count: read.table.count_info.glues,
 
@@ -968,7 +988,7 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
         art_mesh_draw_orders: vec![0.0; puppet.art_mesh_count as usize],
         art_mesh_render_orders: vec![0; puppet.art_mesh_count as usize],
 
-        art_mesh_data: art_mesh_data,
+        art_mesh_data,
         art_mesh_opacities: vec![0.0; puppet.art_mesh_count as usize],
         art_mesh_colors: vec![BlendColor::NAN; puppet.art_mesh_count as usize],
 
