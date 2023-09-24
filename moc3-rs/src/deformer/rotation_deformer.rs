@@ -1,12 +1,26 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Vec2};
 
-#[derive(Debug, Default, Clone, Copy, Pod, Zeroable)]
+#[derive(Pod, Zeroable, Debug, Default, Clone, Copy)]
 #[repr(C)]
 pub struct TransformData {
     pub origin: Vec2,
     pub scale: f32,
     pub angle: f32,
+}
+
+impl TransformData {
+    pub const ZERO: Self = TransformData {
+        origin: Vec2::ZERO,
+        scale: 0.0,
+        angle: 0.0,
+    };
+
+    pub const NAN: Self = TransformData {
+        origin: Vec2::NAN,
+        scale: f32::NAN,
+        angle: f32::NAN,
+    };
 }
 
 // Rotation deformers seem pretty simple. I think they're

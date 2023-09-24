@@ -1,13 +1,9 @@
 use core::slice;
 
-use bytemuck::{cast_slice, cast_vec};
-use glam::{vec2, vec3, Vec2, Vec3};
+use bytemuck::{cast_slice, cast_slice_mut};
+use glam::Vec2;
 
-use crate::{
-    deformer::rotation_deformer::TransformData,
-    interpolate::{bilinear_interp, linear_interp, trilinear_interp},
-    math::rescale,
-};
+use crate::{deformer::rotation_deformer::TransformData, math::rescale};
 
 use super::{BlendColor, PuppetFrameData};
 
@@ -66,9 +62,7 @@ impl BlendShapeConstraints {
 /// to transform the puppet data given the input parameters.
 #[derive(Debug, Clone)]
 pub struct ParamApplicator {
-    pub x: Option<(Vec<f32>, usize)>,
-    pub y: Option<(Vec<f32>, usize)>,
-    pub z: Option<(Vec<f32>, usize)>,
+    pub data: Vec<(Vec<f32>, usize)>,
 
     pub kind_index: u32,
     pub values: ApplicatorKind,
@@ -89,234 +83,53 @@ pub enum ApplicatorKind {
 
 impl ParamApplicator {
     // This entire thing needs to be shredded and rewritten.
-    fn do_interpolate(&self, parameters: &[f32], choices: &[Vec<Vec2>]) -> Vec<Vec2> {
-        let data: Vec<Vec2> = cast_vec(if self.z.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let z_unwrapped = self.z.as_ref().unwrap();
+    fn do_interpolate<'a, F>(&'a self, parameters: &[f32], out: &mut [f32], get_choices: F)
+    where
+        F: Fn(usize) -> &'a [f32],
+    {
+        let data = &self.data;
+        let mut rescaled_params = [f32::NAN; 31];
+        assert!(data.len() <= 31);
 
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-            let z_val = parameters[z_unwrapped.1];
-            let (z_lower_i, z_upper_i) = lower_upper_indices(&z_unwrapped.0, &z_val);
+        let mut base_index = 0;
+        {
+            let mut last_size = 1;
+            for (i, (keys, index)) in data.iter().enumerate() {
+                let (lower, upper) = lower_upper_indices(keys, &parameters[*index]);
+                rescaled_params[i] = rescale(parameters[*index], keys[lower], keys[upper]);
 
-            let temp = |x: usize, y: usize, z: usize| -> (Vec3, &[f32]) {
-                let point = vec3(x_unwrapped.0[x], y_unwrapped.0[y], z_unwrapped.0[z]);
-                let index = x + y * x_unwrapped.0.len() + z * y_unwrapped.0.len();
-
-                (point, cast_slice(&choices[index]))
-            };
-
-            trilinear_interp(
-                vec3(x_val, y_val, z_val),
-                temp(x_lower_i, y_lower_i, z_lower_i),
-                temp(x_upper_i, y_lower_i, z_lower_i),
-                temp(x_lower_i, y_upper_i, z_lower_i),
-                temp(x_upper_i, y_upper_i, z_lower_i),
-                temp(x_lower_i, y_lower_i, z_upper_i),
-                temp(x_upper_i, y_lower_i, z_upper_i),
-                temp(x_lower_i, y_upper_i, z_upper_i),
-                temp(x_upper_i, y_upper_i, z_upper_i),
-            )
-        } else if self.y.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-
-            let temp = |x: usize, y: usize| -> (Vec2, &[f32]) {
-                let point = vec2(x_unwrapped.0[x], y_unwrapped.0[y]);
-                let index = x + y * x_unwrapped.0.len();
-
-                (point, cast_slice(&choices[index]))
-            };
-
-            bilinear_interp(
-                vec2(x_val, y_val),
-                temp(x_lower_i, y_lower_i),
-                temp(x_upper_i, y_lower_i),
-                temp(x_lower_i, y_upper_i),
-                temp(x_upper_i, y_upper_i),
-            )
-        } else if self.x.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-
-            let temp = |x: usize| -> (f32, &[f32]) {
-                let point = x_unwrapped.0[x];
-                let index = x;
-
-                (point, cast_slice(&choices[index]))
-            };
-
-            linear_interp(x_val, temp(x_lower_i), temp(x_upper_i))
-        } else {
-            cast_slice(&choices[0]).to_vec()
-        });
-
-        data
-    }
-
-    fn do_interpolate_color(&self, parameters: &[f32], choices: &[BlendColor]) -> BlendColor {
-        let res = if self.z.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let z_unwrapped = self.z.as_ref().unwrap();
-
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-            let z_val = parameters[z_unwrapped.1];
-            let (z_lower_i, z_upper_i) = lower_upper_indices(&z_unwrapped.0, &z_val);
-
-            let temp = |x: usize, y: usize, z: usize| -> (Vec3, &[f32]) {
-                let point = vec3(x_unwrapped.0[x], y_unwrapped.0[y], z_unwrapped.0[z]);
-                let index = x + y * x_unwrapped.0.len() + z * y_unwrapped.0.len();
-
-                (point, cast_slice(core::slice::from_ref(&choices[index])))
-            };
-
-            trilinear_interp(
-                vec3(x_val, y_val, z_val),
-                temp(x_lower_i, y_lower_i, z_lower_i),
-                temp(x_upper_i, y_lower_i, z_lower_i),
-                temp(x_lower_i, y_upper_i, z_lower_i),
-                temp(x_upper_i, y_upper_i, z_lower_i),
-                temp(x_lower_i, y_lower_i, z_upper_i),
-                temp(x_upper_i, y_lower_i, z_upper_i),
-                temp(x_lower_i, y_upper_i, z_upper_i),
-                temp(x_upper_i, y_upper_i, z_upper_i),
-            )
-        } else if self.y.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-
-            let temp = |x: usize, y: usize| -> (Vec2, &[f32]) {
-                let point = vec2(x_unwrapped.0[x], y_unwrapped.0[y]);
-                let index = x + y * x_unwrapped.0.len();
-
-                (point, cast_slice(core::slice::from_ref(&choices[index])))
-            };
-
-            bilinear_interp(
-                vec2(x_val, y_val),
-                temp(x_lower_i, y_lower_i),
-                temp(x_upper_i, y_lower_i),
-                temp(x_lower_i, y_upper_i),
-                temp(x_upper_i, y_upper_i),
-            )
-        } else if self.x.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-
-            let temp = |x: usize| -> (f32, &[f32]) {
-                let point = x_unwrapped.0[x];
-                let index = x;
-
-                (point, cast_slice(core::slice::from_ref(&choices[index])))
-            };
-
-            linear_interp(x_val, temp(x_lower_i), temp(x_upper_i))
-        } else {
-            cast_slice(core::slice::from_ref(&choices[0])).to_vec()
-        };
-
-        BlendColor {
-            multiply_color: vec3(res[0], res[1], res[2]),
-            screen_color: vec3(res[3], res[4], res[5]),
+                base_index += lower * last_size;
+                last_size *= keys.len();
+            }
         }
-    }
 
-    fn do_interpolate_single(&self, parameters: &[f32], choices: &[f32]) -> f32 {
-        let data = if self.z.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let z_unwrapped = self.z.as_ref().unwrap();
+        for num in 0..(1 << data.len()) {
+            let mut mult = 1.0;
+            let mut index = base_index;
 
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-            let z_val = parameters[z_unwrapped.1];
-            let (z_lower_i, z_upper_i) = lower_upper_indices(&z_unwrapped.0, &z_val);
+            let mut last_size = 1;
+            for (i, (keys, _)) in data.iter().enumerate() {
+                if num & (1 << i) != 0 {
+                    index += last_size;
+                    mult *= rescaled_params[i];
+                } else {
+                    mult *= 1.0 - rescaled_params[i];
+                }
+                last_size *= keys.len();
+            }
 
-            let temp = |x: usize, y: usize, z: usize| -> (Vec3, &[f32]) {
-                let point = vec3(x_unwrapped.0[x], y_unwrapped.0[y], z_unwrapped.0[z]);
-                let index = x + y * x_unwrapped.0.len() + z * y_unwrapped.0.len();
-
-                (point, slice::from_ref(&choices[index]))
-            };
-
-            trilinear_interp(
-                vec3(x_val, y_val, z_val),
-                temp(x_lower_i, y_lower_i, z_lower_i),
-                temp(x_upper_i, y_lower_i, z_lower_i),
-                temp(x_lower_i, y_upper_i, z_lower_i),
-                temp(x_upper_i, y_upper_i, z_lower_i),
-                temp(x_lower_i, y_lower_i, z_upper_i),
-                temp(x_upper_i, y_lower_i, z_upper_i),
-                temp(x_lower_i, y_upper_i, z_upper_i),
-                temp(x_upper_i, y_upper_i, z_upper_i),
-            )[0]
-        } else if self.y.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let y_unwrapped = self.y.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-            let y_val = parameters[y_unwrapped.1];
-            let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-
-            let temp = |x: usize, y: usize| -> (Vec2, &[f32]) {
-                let point = vec2(x_unwrapped.0[x], y_unwrapped.0[y]);
-                let index = x + y * x_unwrapped.0.len();
-
-                (point, slice::from_ref(&choices[index]))
-            };
-
-            bilinear_interp(
-                vec2(x_val, y_val),
-                temp(x_lower_i, y_lower_i),
-                temp(x_upper_i, y_lower_i),
-                temp(x_lower_i, y_upper_i),
-                temp(x_upper_i, y_upper_i),
-            )[0]
-        } else if self.x.is_some() {
-            let x_unwrapped = self.x.as_ref().unwrap();
-            let x_val = parameters[x_unwrapped.1];
-            let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-
-            let temp = |x: usize| -> (f32, &[f32]) {
-                let point = x_unwrapped.0[x];
-                let index = x;
-
-                (point, slice::from_ref(&choices[index]))
-            };
-
-            linear_interp(x_val, temp(x_lower_i), temp(x_upper_i))[0]
-        } else {
-            choices[0]
-        };
-
-        data
+            let data = get_choices(index);
+            debug_assert_eq!(data.len(), out.len());
+            for (o, d) in out.iter_mut().zip(data) {
+                *o += d * mult;
+            }
+        }
     }
 
     pub fn apply(&self, parameters: &[f32], frame_data: &mut PuppetFrameData) {
         let ind = self.kind_index as usize;
         match &self.values {
             ApplicatorKind::ArtMesh(choices, opacities, draw_orders, colors) => {
-                let data = self.do_interpolate(parameters, choices);
-
                 if let Some(constraints) = &self.blend {
                     let mut lowest_weight: f32 = 1.0;
 
@@ -324,119 +137,100 @@ impl ParamApplicator {
                         lowest_weight = lowest_weight.min(constraint.process(parameters));
                     }
 
-                    for (change, diff) in frame_data.art_mesh_data[ind].iter_mut().zip(data) {
-                        *change += diff * lowest_weight;
-                    }
+                    self.do_interpolate(
+                        parameters,
+                        bytemuck::cast_slice_mut(&mut frame_data.art_mesh_data[ind]),
+                        |a| bytemuck::cast_slice(choices[a].as_slice()),
+                    );
                 } else {
-                    frame_data.art_mesh_data[ind] = data;
-                    frame_data.art_mesh_draw_orders[ind] =
-                        self.do_interpolate_single(parameters, draw_orders);
-                    frame_data.art_mesh_opacities[ind] =
-                        self.do_interpolate_single(parameters, opacities);
+                    frame_data.art_mesh_data[ind].fill(Vec2::ZERO);
+                    self.do_interpolate(
+                        parameters,
+                        bytemuck::cast_slice_mut(&mut frame_data.art_mesh_data[ind]),
+                        |a| bytemuck::cast_slice(choices[a].as_slice()),
+                    );
+
+                    frame_data.art_mesh_draw_orders[ind] = 0.0;
+                    self.do_interpolate(
+                        parameters,
+                        slice::from_mut(&mut frame_data.art_mesh_draw_orders[ind]),
+                        |a| slice::from_ref(&draw_orders[a]),
+                    );
+
+                    frame_data.art_mesh_opacities[ind] = 0.0;
+                    self.do_interpolate(
+                        parameters,
+                        slice::from_mut(&mut frame_data.art_mesh_opacities[ind]),
+                        |a| slice::from_ref(&opacities[a]),
+                    );
 
                     if !colors.is_empty() {
-                        frame_data.art_mesh_colors[ind] =
-                            self.do_interpolate_color(parameters, colors);
+                        frame_data.art_mesh_colors[ind] = BlendColor::ZERO;
+                        self.do_interpolate(
+                            parameters,
+                            cast_slice_mut(slice::from_mut(&mut frame_data.art_mesh_colors[ind])),
+                            |a| cast_slice(slice::from_ref(&colors[a])),
+                        );
                     }
                 }
             }
             ApplicatorKind::WarpDeformer(choices, opacities, colors) => {
-                let data = self.do_interpolate(parameters, choices);
+                frame_data.warp_deformer_data[ind].fill(Vec2::ZERO);
+                self.do_interpolate(
+                    parameters,
+                    bytemuck::cast_slice_mut(&mut frame_data.warp_deformer_data[ind]),
+                    |a| bytemuck::cast_slice(choices[a].as_slice()),
+                );
 
-                frame_data.warp_deformer_opacities[ind] =
-                    self.do_interpolate_single(parameters, opacities);
-                frame_data.warp_deformer_data[ind] = data;
+                frame_data.warp_deformer_opacities[ind] = 0.0;
+                self.do_interpolate(
+                    parameters,
+                    slice::from_mut(&mut frame_data.warp_deformer_opacities[ind]),
+                    |a| slice::from_ref(&opacities[a]),
+                );
 
                 if !colors.is_empty() {
-                    frame_data.warp_deformer_colors[ind] =
-                        self.do_interpolate_color(parameters, colors);
+                    frame_data.warp_deformer_colors[ind] = BlendColor::ZERO;
+                    self.do_interpolate(
+                        parameters,
+                        cast_slice_mut(slice::from_mut(&mut frame_data.warp_deformer_colors[ind])),
+                        |a| cast_slice(slice::from_ref(&colors[a])),
+                    );
                 }
             }
             ApplicatorKind::RotationDeformer(choices, opacities, colors) => {
-                frame_data.rotation_deformer_opacities[ind] =
-                    self.do_interpolate_single(parameters, opacities);
-                let res = if self.z.is_some() {
-                    let x_unwrapped = self.x.as_ref().unwrap();
-                    let y_unwrapped = self.y.as_ref().unwrap();
-                    let z_unwrapped = self.z.as_ref().unwrap();
+                frame_data.rotation_deformer_data[ind] = TransformData::ZERO;
+                self.do_interpolate(
+                    parameters,
+                    cast_slice_mut(slice::from_mut(&mut frame_data.rotation_deformer_data[ind])),
+                    |a| cast_slice(slice::from_ref(&choices[a])),
+                );
 
-                    let x_val = parameters[x_unwrapped.1];
-                    let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-                    let y_val = parameters[y_unwrapped.1];
-                    let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-                    let z_val = parameters[z_unwrapped.1];
-                    let (z_lower_i, z_upper_i) = lower_upper_indices(&z_unwrapped.0, &z_val);
-
-                    let temp = |x: usize, y: usize, z: usize| -> (Vec3, &[f32]) {
-                        let point = vec3(x_unwrapped.0[x], y_unwrapped.0[y], z_unwrapped.0[z]);
-                        let index = x + y * x_unwrapped.0.len() + z * y_unwrapped.0.len();
-
-                        (point, cast_slice(slice::from_ref(&choices[index])))
-                    };
-
-                    trilinear_interp(
-                        vec3(x_val, y_val, z_val),
-                        temp(x_lower_i, y_lower_i, z_lower_i),
-                        temp(x_upper_i, y_lower_i, z_lower_i),
-                        temp(x_lower_i, y_upper_i, z_lower_i),
-                        temp(x_upper_i, y_upper_i, z_lower_i),
-                        temp(x_lower_i, y_lower_i, z_upper_i),
-                        temp(x_upper_i, y_lower_i, z_upper_i),
-                        temp(x_lower_i, y_upper_i, z_upper_i),
-                        temp(x_upper_i, y_upper_i, z_upper_i),
-                    )
-                } else if self.y.is_some() {
-                    let x_unwrapped = self.x.as_ref().unwrap();
-                    let y_unwrapped = self.y.as_ref().unwrap();
-                    let x_val = parameters[x_unwrapped.1];
-                    let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-                    let y_val = parameters[y_unwrapped.1];
-                    let (y_lower_i, y_upper_i) = lower_upper_indices(&y_unwrapped.0, &y_val);
-
-                    let temp = |x: usize, y: usize| -> (Vec2, &[f32]) {
-                        let point = vec2(x_unwrapped.0[x], y_unwrapped.0[y]);
-                        let index = x + y * x_unwrapped.0.len();
-
-                        (point, cast_slice(slice::from_ref(&choices[index])))
-                    };
-
-                    bilinear_interp(
-                        vec2(x_val, y_val),
-                        temp(x_lower_i, y_lower_i),
-                        temp(x_upper_i, y_lower_i),
-                        temp(x_lower_i, y_upper_i),
-                        temp(x_upper_i, y_upper_i),
-                    )
-                } else if self.x.is_some() {
-                    let x_unwrapped = self.x.as_ref().unwrap();
-                    let x_val = parameters[x_unwrapped.1];
-                    let (x_lower_i, x_upper_i) = lower_upper_indices(&x_unwrapped.0, &x_val);
-
-                    let temp = |x: usize| -> (f32, &[f32]) {
-                        let point = x_unwrapped.0[x];
-                        let index = x;
-
-                        (point, cast_slice(slice::from_ref(&choices[index])))
-                    };
-
-                    linear_interp(x_val, temp(x_lower_i), temp(x_upper_i))
-                } else {
-                    cast_slice(slice::from_ref(&choices[0])).to_vec()
-                };
-
-                frame_data.rotation_deformer_data[ind] = TransformData {
-                    origin: vec2(res[0], res[1]),
-                    scale: res[2],
-                    angle: res[3],
-                };
+                frame_data.rotation_deformer_opacities[ind] = 0.0;
+                self.do_interpolate(
+                    parameters,
+                    slice::from_mut(&mut frame_data.rotation_deformer_opacities[ind]),
+                    |a| slice::from_ref(&opacities[a]),
+                );
 
                 if !colors.is_empty() {
-                    frame_data.rotation_deformer_colors[ind] =
-                        self.do_interpolate_color(parameters, colors);
+                    frame_data.rotation_deformer_colors[ind] = BlendColor::ZERO;
+                    self.do_interpolate(
+                        parameters,
+                        cast_slice_mut(slice::from_mut(
+                            &mut frame_data.rotation_deformer_colors[ind],
+                        )),
+                        |a| cast_slice(slice::from_ref(&colors[a])),
+                    );
                 }
             }
             ApplicatorKind::Glue(intensities) => {
-                frame_data.glue_data[ind] = intensities[intensities.len() / 2];
+                frame_data.glue_data[ind] = 0.0;
+                self.do_interpolate(
+                    parameters,
+                    slice::from_mut(&mut frame_data.glue_data[ind]),
+                    |a| slice::from_ref(&intensities[a]),
+                );
             }
         }
     }

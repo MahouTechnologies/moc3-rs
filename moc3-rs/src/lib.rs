@@ -6,8 +6,7 @@ use puppet::{puppet_from_moc3, Puppet};
 use thiserror::Error;
 
 pub mod data;
-pub mod deformer;
-pub mod interpolate;
+mod deformer;
 mod math;
 pub mod puppet;
 

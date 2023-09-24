@@ -37,12 +37,17 @@ pub struct Puppet {
     pub applicators: Vec<ParamApplicator>,
 
     pub art_mesh_count: u32,
+    pub warp_deformer_count: u32,
+    pub rotation_deformer_count: u32,
+    pub glue_count: u32,
+
+    pub warp_deformer_grid_count: Vec<u32>,
+
     pub art_mesh_uvs: Vec<Vec<Vec2>>,
     pub art_mesh_indices: Vec<Vec<u16>>,
     pub art_mesh_textures: Vec<u32>,
     pub art_mesh_flags: Vec<ArtMeshFlags>,
-
-    pub vertexes_count: Vec<u32>,
+    pub art_mesh_vertexes: Vec<u32>,
 
     pub draw_order_nodes: Arena<DrawOrderNode>,
     pub draw_order_roots: Vec<NodeId>,
@@ -66,6 +71,16 @@ impl Default for BlendColor {
 }
 
 impl BlendColor {
+    pub const ZERO: Self = BlendColor {
+        multiply_color: Vec3::ZERO,
+        screen_color: Vec3::ZERO,
+    };
+
+    pub const NAN: Self = BlendColor {
+        multiply_color: Vec3::NAN,
+        screen_color: Vec3::NAN,
+    };
+
     pub fn blend(&self, child: &BlendColor) -> BlendColor {
         Self {
             multiply_color: self.multiply_color * child.multiply_color,
@@ -77,23 +92,21 @@ impl BlendColor {
 
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
-    pub art_mesh_render_orders: Vec<u32>,
     pub art_mesh_draw_orders: Vec<f32>,
+    pub art_mesh_render_orders: Vec<u32>,
+
+    pub art_mesh_data: Vec<Vec<Vec2>>,
+    pub art_mesh_opacities: Vec<f32>,
+    pub art_mesh_colors: Vec<BlendColor>,
 
     pub warp_deformer_data: Vec<Vec<Vec2>>,
     pub rotation_deformer_data: Vec<TransformData>,
-    pub art_mesh_data: Vec<Vec<Vec2>>,
-
-    pub deformer_scale_data: Vec<f32>,
-
     pub warp_deformer_opacities: Vec<f32>,
     pub rotation_deformer_opacities: Vec<f32>,
-    pub art_mesh_opacities: Vec<f32>,
-
     pub warp_deformer_colors: Vec<BlendColor>,
     pub rotation_deformer_colors: Vec<BlendColor>,
-    pub art_mesh_colors: Vec<BlendColor>,
 
+    pub deformer_scale_data: Vec<f32>,
     pub glue_data: Vec<f32>,
 }
 
@@ -104,7 +117,7 @@ impl Puppet {
         }
 
         let art_mesh_ptr = frame_data.art_mesh_data.as_mut_ptr();
-        let warp_deformer_ptr = frame_data.warp_deformer_data.as_mut_ptr();
+        let warp_deformer_ptr: *mut Vec<Vec2> = frame_data.warp_deformer_data.as_mut_ptr();
         let rotation_deformer_ptr = frame_data.rotation_deformer_data.as_mut_ptr();
 
         let art_mesh_opacity_ptr = frame_data.art_mesh_opacities.as_mut_ptr();
@@ -263,32 +276,17 @@ fn collect_blend_shape_constraints(
     ret
 }
 
-fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>) {
+fn collect_blend_shapes(
+    read: &Moc3Data,
+    blend_shape_parameter_bindings_to_parameter: &[usize],
+    applicators: &mut Vec<ParamApplicator>,
+) {
     if read.header.version < Version::V4_02 {
         return;
     }
 
     let positions = read.positions();
     let keys = read.keys();
-
-    // let parameters = &read.table.parameters;
-    let parameters_v402 = read.table.parameters_v402.as_ref().unwrap();
-
-    let mut blend_shape_parameter_bindings_to_parameter =
-        vec![0usize; read.table.count_info.blend_shape_parameter_bindings as usize];
-
-    for i in 0..read.table.count_info.parameters {
-        let i = i as usize;
-
-        if parameters_v402.parameter_types[i] == ParameterType::BlendShape {
-            let start = parameters_v402.blend_shape_parameter_binding_sources_starts[i] as usize;
-            let count = parameters_v402.blend_shape_parameter_binding_sources_counts[i] as usize;
-
-            for a in start..(start + count) {
-                blend_shape_parameter_bindings_to_parameter[a] = i;
-            }
-        }
-    }
 
     let blend_shape_keyform_bindings = read.table.blend_shape_keyform_bindings.as_ref().unwrap();
     let blend_shape_parameter_bindings =
@@ -361,9 +359,7 @@ fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>)
                         draw_orders_to_bind,
                         Vec::new(),
                     ),
-                    x: Some(x),
-                    y: None,
-                    z: None,
+                    data: vec![x],
                     blend: Some(collect_blend_shape_constraints(
                         read,
                         constraint_index_start,
@@ -438,9 +434,7 @@ fn collect_blend_shapes(read: &Moc3Data, applicators: &mut Vec<ParamApplicator>)
                         opacities_to_bind,
                         Vec::new(),
                     ),
-                    x: Some(x),
-                    y: None,
-                    z: None,
+                    data: vec![x],
                     blend: Some(collect_blend_shape_constraints(
                         read,
                         constraint_index_start,
@@ -478,14 +472,37 @@ fn collect_colors_to_bind(read: &Moc3Data, colors_start: usize, count: usize) ->
     ret
 }
 
+fn collect_parameter_bindings(
+    read: &Moc3Data,
+    parameter_bindings_to_parameter: &[usize],
+    parameter_bindings_start: usize,
+    parameter_bindings_count: usize,
+) -> Vec<(Vec<f32>, usize)> {
+    let parameter_bindings = &read.table.parameter_bindings;
+    let parameter_binding_indices = &read.table.parameter_binding_indices;
+    let keys = read.keys();
+
+    let mut ret = Vec::new();
+
+    for i in parameter_bindings_start..parameter_bindings_start + parameter_bindings_count {
+        let ind = parameter_binding_indices.binding_sources_indices[i] as usize;
+        let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
+        let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
+
+        ret.push((
+            keys[key_starts..key_starts + key_counts].to_owned(),
+            parameter_bindings_to_parameter[ind],
+        ))
+    }
+
+    ret
+}
+
 pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let art_meshes = &read.table.art_meshes;
     let parameters = &read.table.parameters;
-    let parameter_bindings = &read.table.parameter_bindings;
-    let parameter_binding_indices = &read.table.parameter_binding_indices;
     let keyform_bindings = &read.table.keyform_bindings;
     let positions = read.positions();
-    let keys = read.keys();
 
     // We store our data in a slightly different way than how it was intended, so we
     // need this map of parameter binding index back up to the parameter itself. This is
@@ -618,47 +635,6 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             let parameter_bindings_start: usize =
                 keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
 
-            // TODO: replace this, I was told the 3 is a suggestion and not a hard cap
-            assert!(parameter_bindings_count <= 3);
-            let x_index = if parameter_bindings_count >= 1 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
-            let y_index = if parameter_bindings_count >= 2 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start + 1] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
-            let z_index = if parameter_bindings_count >= 3 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start + 2] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
             applicators.push(ParamApplicator {
                 kind_index: deformers.specific_sources_indices[i],
                 values: ApplicatorKind::WarpDeformer(
@@ -666,9 +642,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                     opacities_to_bind,
                     colors_to_bind,
                 ),
-                x: x_index,
-                y: y_index,
-                z: z_index,
+                data: collect_parameter_bindings(
+                    read,
+                    &parameter_bindings_to_parameter,
+                    parameter_bindings_start,
+                    parameter_bindings_count,
+                ),
                 blend: None,
             });
         } else if deformers.types[i] == 1 {
@@ -733,47 +712,6 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             let parameter_bindings_start: usize =
                 keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
 
-            // TODO: replace this, I was told the 3 is a suggestion and not a hard cap
-            assert!(parameter_bindings_count <= 3);
-            let x_index = if parameter_bindings_count >= 1 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
-            let y_index = if parameter_bindings_count >= 2 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start + 1] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
-            let z_index = if parameter_bindings_count >= 3 {
-                let ind = parameter_binding_indices.binding_sources_indices
-                    [parameter_bindings_start + 2] as usize;
-                let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-                let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-                Some((
-                    keys[key_starts..key_starts + key_counts].to_owned(),
-                    parameter_bindings_to_parameter[ind],
-                ))
-            } else {
-                None
-            };
-
             applicators.push(ParamApplicator {
                 kind_index: deformers.specific_sources_indices[i],
                 values: ApplicatorKind::RotationDeformer(
@@ -781,9 +719,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                     opacities_to_bind,
                     colors_to_bind,
                 ),
-                x: x_index,
-                y: y_index,
-                z: z_index,
+                data: collect_parameter_bindings(
+                    read,
+                    &parameter_bindings_to_parameter,
+                    parameter_bindings_start,
+                    parameter_bindings_count,
+                ),
                 blend: None,
             });
         }
@@ -854,47 +795,6 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         let parameter_bindings_start =
             keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
 
-        // TODO: replace this, I was told the 3 is a suggestion and not a hard cap
-        // assert!(parameter_bindings_count <= 3);
-        let x_index = if parameter_bindings_count >= 1 {
-            let ind = parameter_binding_indices.binding_sources_indices[parameter_bindings_start]
-                as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
-        let y_index = if parameter_bindings_count >= 2 {
-            let ind = parameter_binding_indices.binding_sources_indices
-                [parameter_bindings_start + 1] as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
-        let z_index = if parameter_bindings_count == 3 {
-            let ind = parameter_binding_indices.binding_sources_indices
-                [parameter_bindings_start + 2] as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
         applicators.push(ParamApplicator {
             kind_index: i as u32,
             values: ApplicatorKind::ArtMesh(
@@ -903,9 +803,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 draw_orders_to_bind,
                 colors_to_bind,
             ),
-            x: x_index,
-            y: y_index,
-            z: z_index,
+            data: collect_parameter_bindings(
+                read,
+                &parameter_bindings_to_parameter,
+                parameter_bindings_start,
+                parameter_bindings_count,
+            ),
             blend: None,
         });
     }
@@ -944,58 +847,24 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         let parameter_bindings_start =
             keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
 
-        // TODO: replace this, I was told the 3 is a suggestion and not a hard cap
-        assert!(parameter_bindings_count <= 3);
-        let x_index = if parameter_bindings_count >= 1 {
-            let ind = parameter_binding_indices.binding_sources_indices[parameter_bindings_start]
-                as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
-        let y_index = if parameter_bindings_count >= 2 {
-            let ind = parameter_binding_indices.binding_sources_indices
-                [parameter_bindings_start + 1] as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
-        let z_index = if parameter_bindings_count == 3 {
-            let ind = parameter_binding_indices.binding_sources_indices
-                [parameter_bindings_start + 2] as usize;
-            let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-            let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-            Some((
-                keys[key_starts..key_starts + key_counts].to_owned(),
-                parameter_bindings_to_parameter[ind],
-            ))
-        } else {
-            None
-        };
-
         applicators.push(ParamApplicator {
             kind_index: i as u32,
             values: ApplicatorKind::Glue(intensities_to_bind),
-            x: x_index,
-            y: y_index,
-            z: z_index,
+            data: collect_parameter_bindings(
+                read,
+                &parameter_bindings_to_parameter,
+                parameter_bindings_start,
+                parameter_bindings_count,
+            ),
             blend: None,
         });
     }
     // ----- END PARAMETER STUFF -----
-    collect_blend_shapes(read, &mut applicators);
+    collect_blend_shapes(
+        read,
+        &blend_shape_parameter_bindings_to_parameter,
+        &mut applicators,
+    );
 
     // Here we do the draw order groups. This lets us apply draw orders to the mesh depending on how
     // the draw order groups interact, and lets us calculate the actual priority when the nodes have the
@@ -1052,6 +921,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         params.push(parameters.default_values[i]);
     }
 
+    let mut warp_deformer_grid_count = Vec::new();
+    for i in 0..read.table.count_info.warp_deformers as usize {
+        warp_deformer_grid_count.push(warp_deformers.rows[i] * warp_deformers.columns[i]);
+    }
+
     Puppet {
         node_roots,
         nodes: node_arena,
@@ -1061,14 +935,55 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         applicators,
 
         art_mesh_count: read.table.count_info.art_meshes,
+        warp_deformer_count: read.table.count_info.warp_deformer_keyforms,
+        rotation_deformer_count: read.table.count_info.rotation_deformers,
+        glue_count: read.table.count_info.glues,
+
+        warp_deformer_grid_count,
+
+        art_mesh_uvs,
         art_mesh_indices,
         art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
         art_mesh_flags: read.table.art_meshes.art_mesh_flags.clone(),
-        art_mesh_uvs,
-        vertexes_count: read.table.art_meshes.vertex_counts.clone(),
+        art_mesh_vertexes: read.table.art_meshes.vertex_counts.clone(),
 
         draw_order_nodes,
         draw_order_roots: draw_order_roots.into_iter().map(|x| x.unwrap()).collect(),
-        max_draw_order_children: 222,
+        max_draw_order_children,
+    }
+}
+
+pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
+    let mut warp_deformer_data = Vec::new();
+    for count in &puppet.warp_deformer_grid_count {
+        warp_deformer_data.push(vec![Vec2::NAN; *count as usize]);
+    }
+
+    let mut art_mesh_data = Vec::new();
+    for count in &puppet.art_mesh_vertexes {
+        art_mesh_data.push(vec![Vec2::NAN; *count as usize]);
+    }
+
+    PuppetFrameData {
+        art_mesh_draw_orders: vec![0.0; puppet.art_mesh_count as usize],
+        art_mesh_render_orders: vec![0; puppet.art_mesh_count as usize],
+
+        art_mesh_data: art_mesh_data,
+        art_mesh_opacities: vec![0.0; puppet.art_mesh_count as usize],
+        art_mesh_colors: vec![BlendColor::NAN; puppet.art_mesh_count as usize],
+
+        warp_deformer_data,
+        rotation_deformer_data: vec![TransformData::NAN; puppet.rotation_deformer_count as usize],
+        warp_deformer_opacities: vec![f32::NAN; puppet.warp_deformer_count as usize],
+        rotation_deformer_opacities: vec![f32::NAN; puppet.rotation_deformer_count as usize],
+        warp_deformer_colors: vec![BlendColor::NAN; puppet.warp_deformer_count as usize],
+        rotation_deformer_colors: vec![BlendColor::NAN; puppet.rotation_deformer_count as usize],
+
+        deformer_scale_data: vec![
+            f32::NAN;
+            puppet.warp_deformer_count as usize
+                + puppet.rotation_deformer_count as usize
+        ],
+        glue_data: vec![f32::NAN; puppet.glue_count as usize],
     }
 }

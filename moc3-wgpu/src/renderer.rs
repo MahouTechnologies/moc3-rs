@@ -326,7 +326,7 @@ pub fn new_renderer(
     }
 
     let mut vertex_buffers = Vec::with_capacity(puppet.art_mesh_count as usize);
-    for len in &puppet.vertexes_count {
+    for len in &puppet.art_mesh_vertexes {
         let vertex_buffer = device.create_buffer(&BufferDescriptor {
             size: ((*len as usize) * std::mem::size_of::<Vec2>()) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,

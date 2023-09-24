@@ -1,7 +1,7 @@
 use binrw::BinReaderExt;
 use moc3_rs::{
     data::Moc3Data,
-    puppet::{puppet_from_moc3, Puppet, PuppetFrameData},
+    puppet::{framedata_for_puppet, puppet_from_moc3, Puppet, PuppetFrameData},
 };
 use moc3_wgpu::renderer::new_renderer;
 use std::fs::File;
@@ -17,39 +17,9 @@ fn main() {
     let puppet = puppet_from_moc3(&read);
 
     let params = puppet.params.clone();
-
     println!("{:?}", params);
 
-    let art_mesh_data = vec![Default::default(); read.table.count_info.art_meshes as usize];
-    let warp_deformer_data =
-        vec![Default::default(); read.table.count_info.warp_deformers as usize];
-    let rotation_deformer_data =
-        vec![Default::default(); read.table.count_info.rotation_deformers as usize];
-    let glue_data = vec![Default::default(); read.table.count_info.glues as usize];
-
-    let mut frame_data = PuppetFrameData {
-        art_mesh_data,
-        warp_deformer_data,
-        rotation_deformer_data,
-        art_mesh_render_orders: vec![0; read.table.count_info.art_meshes as usize],
-        art_mesh_draw_orders: vec![500.0; read.table.count_info.art_meshes as usize],
-        deformer_scale_data: vec![1.0; read.table.count_info.deformers as usize],
-        art_mesh_opacities: vec![1.0; read.table.count_info.art_meshes as usize],
-        warp_deformer_opacities: vec![1.0; read.table.count_info.warp_deformers as usize],
-        rotation_deformer_opacities: vec![1.0; read.table.count_info.rotation_deformers as usize],
-
-        art_mesh_colors: vec![Default::default(); read.table.count_info.art_meshes as usize],
-        rotation_deformer_colors: vec![
-            Default::default();
-            read.table.count_info.rotation_deformers as usize
-        ],
-        warp_deformer_colors: vec![
-            Default::default();
-            read.table.count_info.warp_deformers as usize
-        ],
-
-        glue_data,
-    };
+    let mut frame_data = framedata_for_puppet(&puppet);
 
     puppet.update(&params, &mut frame_data);
 
