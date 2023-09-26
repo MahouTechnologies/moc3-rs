@@ -987,6 +987,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moc3-impressionism"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "encase",
+ "glam",
+ "image",
+ "moc3-rs",
+ "wgpu",
+]
+
+[[package]]
 name = "moc3-rs"
 version = "0.1.0"
 dependencies = [
