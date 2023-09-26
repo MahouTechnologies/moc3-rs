@@ -117,6 +117,28 @@ pub struct PuppetFrameData {
 }
 
 impl Puppet {
+    // Figures out how movement of a parent deformer changes the angle of a child deformer.
+    fn calculate_rotation_deformer_angle<F>(
+        origin: Vec2,
+        fudge_factor: f32,
+        transform: F,
+    ) -> (Vec2, f32)
+    where
+        F: Fn(Vec2) -> Vec2,
+    {
+        let direction = Vec2::NEG_Y * fudge_factor;
+        let transformed_origin = transform(origin);
+        let transformed_direction = transform(origin + direction);
+        let ret = transformed_direction - transformed_origin;
+
+        let angle = if ret.is_finite() && ret != Vec2::ZERO {
+            direction.angle_between(ret).to_degrees()
+        } else {
+            0.0
+        };
+
+        (transformed_origin, angle)
+    }
     pub fn update(&self, parameter_values: &[f32], frame_data: &mut PuppetFrameData) {
         for applicator in &self.applicators {
             applicator.apply(&parameter_values, frame_data);
@@ -152,7 +174,7 @@ impl Puppet {
                     (discriminant(&parent.data), parent.broad_index),
                 );
 
-                let (child_changes, child_opacity, child_color) = match &child.data {
+                let (child_changes, child_opacity, child_color, child_angle) = match &child.data {
                     // Safety: We ensure above that we will not have overlapping references.
                     node::NodeKind::ArtMesh(_) => unsafe {
                         let vec_data = &mut *art_mesh_ptr.add(child.broad_index as usize);
@@ -160,6 +182,7 @@ impl Puppet {
                             vec_data.as_mut_slice(),
                             &mut *art_mesh_opacity_ptr.add(child.broad_index as usize),
                             &mut *art_mesh_color_ptr.add(child.broad_index as usize),
+                            None,
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
@@ -171,6 +194,7 @@ impl Puppet {
                             vec_data.as_mut_slice(),
                             &mut *warp_deformer_opacity_ptr.add(*ind as usize),
                             &mut *warp_deformer_color_ptr.add(*ind as usize),
+                            None,
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
@@ -189,6 +213,7 @@ impl Puppet {
                             slice_data,
                             &mut *rotation_deformer_opacity_ptr.add(*ind as usize),
                             &mut *rotation_deformer_color_ptr.add(child.broad_index as usize),
+                            Some(&mut (*rotation_deformer_ptr.add(*ind as usize)).angle),
                         )
                     },
                 };
@@ -201,13 +226,35 @@ impl Puppet {
                     node::NodeKind::WarpDeformer(data, ind) => {
                         // Safety: We ensure above that we will not have overlapping references.
                         let grid = unsafe { &*warp_deformer_ptr.add(*ind as usize) };
-                        apply_warp_deformer(
-                            grid,
-                            data.is_new_deformerr,
-                            data.rows as usize,
-                            data.columns as usize,
-                            child_changes,
-                        );
+
+                        if let Some(child_angle) = child_angle {
+                            let (new_origin, angle_diff) = Self::calculate_rotation_deformer_angle(
+                                child_changes[0],
+                                0.1,
+                                |p| {
+                                    let mut ret = p;
+                                    apply_warp_deformer(
+                                        grid,
+                                        data.is_new_deformerr,
+                                        data.rows as usize,
+                                        data.columns as usize,
+                                        slice::from_mut(&mut ret),
+                                    );
+                                    ret
+                                },
+                            );
+
+                            *child_angle += angle_diff;
+                            child_changes[0] = new_origin;
+                        } else {
+                            apply_warp_deformer(
+                                grid,
+                                data.is_new_deformerr,
+                                data.rows as usize,
+                                data.columns as usize,
+                                child_changes,
+                            );
+                        }
 
                         // Safety: we guarantee above this will not overlap
                         (
@@ -217,7 +264,27 @@ impl Puppet {
                     }
                     node::NodeKind::RotationDeformer(data, ind) => {
                         let transform = unsafe { &*rotation_deformer_ptr.add(*ind as usize) };
-                        apply_rotation_deformer(transform, data.base_angle, child_changes);
+
+                        if let Some(child_angle) = child_angle {
+                            let (new_origin, angle_diff) = Self::calculate_rotation_deformer_angle(
+                                child_changes[0],
+                                0.1,
+                                |p| {
+                                    let mut ret = p;
+                                    apply_rotation_deformer(
+                                        transform,
+                                        data.base_angle,
+                                        slice::from_mut(&mut ret),
+                                    );
+                                    ret
+                                },
+                            );
+
+                            *child_angle += angle_diff;
+                            child_changes[0] = new_origin;
+                        } else {
+                            apply_rotation_deformer(transform, data.base_angle, child_changes);
+                        }
 
                         // Safety: we guarantee above this will not overlap
                         (
@@ -631,7 +698,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             let colors_to_bind =
                 if let Some(warp_deformer_keyforms_v402) = warp_deformer_keyforms_v402 {
                     let colors_start =
-                        warp_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+                        warp_deformer_keyforms_v402.keyform_color_sources_start[specific] as usize;
 
                     collect_colors_to_bind(read, colors_start, count)
                 } else {
@@ -707,8 +774,8 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 rotation_deformer_keyforms.opacities[start..start + count].to_vec();
             let colors_to_bind =
                 if let Some(rotation_deformer_keyforms_v402) = rotation_deformer_keyforms_v402 {
-                    let colors_start =
-                        rotation_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+                    let colors_start = rotation_deformer_keyforms_v402.keyform_color_sources_start
+                        [specific] as usize;
 
                     collect_colors_to_bind(read, colors_start, count)
                 } else {
