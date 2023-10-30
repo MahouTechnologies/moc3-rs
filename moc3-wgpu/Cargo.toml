@@ -9,4 +9,4 @@ encase = { version = "0.6.1", features = ["glam"] }
 glam = { version = "0.24.1", features = ["bytemuck"] }
 image = "0.24.7"
 moc3-rs = { path = "../moc3-rs" }
-wgpu = "0.17.0"
+wgpu = "0.17.1"

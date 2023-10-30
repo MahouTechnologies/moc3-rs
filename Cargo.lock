@@ -615,6 +615,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42218cb640844e3872cc3c153dc975229e080a6c4733b34709ef445610550226"
 dependencies = [
  "bytemuck",
+ "serde",
 ]
 
 [[package]]
@@ -788,6 +789,12 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "itoa"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "jni-sys"
@@ -995,7 +1002,8 @@ dependencies = [
  "glam",
  "image",
  "moc3-rs",
- "wgpu",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1007,7 +1015,6 @@ dependencies = [
  "glam",
  "indextree",
  "modular-bitfield",
- "serde",
  "thiserror",
 ]
 
@@ -1488,6 +1495,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "ryu"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad4cc8da4ef723ed60bced201181d83791ad433213d8c24efffda1eec85d741"
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1530,6 +1543,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.36",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.107"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b420ce6e3d8bd882e9b243c6eed35dbc9a6110c9769e74b584e0d68d1f20c65"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
@@ -1906,9 +1930,9 @@ checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
 
 [[package]]
 name = "wgpu"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7472f3b69449a8ae073f6ec41d05b6f846902d92a6c45313c50cb25857b736ce"
+checksum = "ed547920565c56c7a29afb4538ac5ae5048865a5d2f05bff3ad4fbeb921a9a2c"
 dependencies = [
  "arrayvec",
  "cfg-if",

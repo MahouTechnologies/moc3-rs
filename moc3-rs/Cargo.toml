@@ -9,6 +9,5 @@ bytemuck = { version = "1.13.1", features = ["extern_crate_alloc", "derive"] }
 glam = { version = "0.24.1", features = ["bytemuck"] }
 indextree = "4.6.0"
 modular-bitfield = "0.11.2"
-serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.48"
 
