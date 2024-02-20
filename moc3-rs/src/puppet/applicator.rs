@@ -177,29 +177,43 @@ impl ParamApplicator {
                 }
             }
             ApplicatorKind::WarpDeformer(choices, opacities, colors) => {
-                frame_data.warp_deformer_data[ind].fill(Vec2::ZERO);
-                self.do_interpolate(
-                    parameters,
-                    bytemuck::cast_slice_mut(&mut frame_data.warp_deformer_data[ind]),
-                    |a| bytemuck::cast_slice(choices[a].as_slice()),
-                );
+                if let Some(constraints) = &self.blend {
+                    let mut lowest_weight: f32 = 1.0;
 
-                frame_data.warp_deformer_opacities[ind] = 0.0;
-                self.do_interpolate(
-                    parameters,
-                    slice::from_mut(&mut frame_data.warp_deformer_opacities[ind]),
-                    |a| slice::from_ref(&opacities[a]),
-                );
+                    for constraint in constraints {
+                        lowest_weight = lowest_weight.min(constraint.process(parameters));
+                    }
 
-                if !colors.is_empty() {
-                    frame_data.warp_deformer_colors[ind] = BlendColor::ZERO;
                     self.do_interpolate(
                         parameters,
-                        cast_slice_mut(slice::from_mut(&mut frame_data.warp_deformer_colors[ind])),
-                        |a| cast_slice(slice::from_ref(&colors[a])),
+                        bytemuck::cast_slice_mut(&mut frame_data.warp_deformer_data[ind]),
+                        |a| bytemuck::cast_slice(choices[a].as_slice()),
                     );
                 } else {
-                    frame_data.warp_deformer_colors[ind] = BlendColor::default();
+                    frame_data.warp_deformer_data[ind].fill(Vec2::ZERO);
+                    self.do_interpolate(
+                        parameters,
+                        bytemuck::cast_slice_mut(&mut frame_data.warp_deformer_data[ind]),
+                        |a| bytemuck::cast_slice(choices[a].as_slice()),
+                    );
+
+                    frame_data.warp_deformer_opacities[ind] = 0.0;
+                    self.do_interpolate(
+                        parameters,
+                        slice::from_mut(&mut frame_data.warp_deformer_opacities[ind]),
+                        |a| slice::from_ref(&opacities[a]),
+                    );
+
+                    if !colors.is_empty() {
+                        frame_data.warp_deformer_colors[ind] = BlendColor::ZERO;
+                        self.do_interpolate(
+                            parameters,
+                            cast_slice_mut(slice::from_mut(&mut frame_data.warp_deformer_colors[ind])),
+                            |a| cast_slice(slice::from_ref(&colors[a])),
+                        );
+                    } else {
+                        frame_data.warp_deformer_colors[ind] = BlendColor::default();
+                    }
                 }
             }
             ApplicatorKind::RotationDeformer(choices, opacities, colors) => {
