@@ -21,6 +21,14 @@ impl TransformData {
         scale: f32::NAN,
         angle: f32::NAN,
     };
+
+    pub fn with_scale(self, scale: f32) -> Self {
+        TransformData {
+            origin: self.origin,
+            scale,
+            angle: self.angle,
+        }
+    }
 }
 
 // Rotation deformers seem pretty simple. I think they're

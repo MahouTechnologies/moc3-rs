@@ -2,6 +2,7 @@
 members = [
     "moc3-example",
     "moc3-impressionism",
+    "moc3-physicsview",
     "moc3-rs",
     "moc3-wgpu",
 ]

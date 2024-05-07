@@ -208,7 +208,9 @@ impl ParamApplicator {
                         frame_data.warp_deformer_colors[ind] = BlendColor::ZERO;
                         self.do_interpolate(
                             parameters,
-                            cast_slice_mut(slice::from_mut(&mut frame_data.warp_deformer_colors[ind])),
+                            cast_slice_mut(slice::from_mut(
+                                &mut frame_data.warp_deformer_colors[ind],
+                            )),
                             |a| cast_slice(slice::from_ref(&colors[a])),
                         );
                     } else {

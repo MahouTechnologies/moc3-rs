@@ -1,0 +1,15 @@
+[package]
+name = "moc3-physicsview"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+eframe = "0.27.2"
+glam = "0.24.1"
+moc3-rs = { path = "../moc3-rs" }
+moc3-impressionism = { path = "../moc3-impressionism" }
+pollster = "0.3.0"
+wgpu = "0.17.1"
+winit = "0.28.6"

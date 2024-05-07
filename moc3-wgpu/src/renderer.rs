@@ -127,16 +127,23 @@ impl Renderer {
             label: None,
         });
 
+        let mut cur_stencil_test_ref: u8 = 0;
+
         for art_index in self.render_orders.iter().copied() {
             let art_index = art_index as usize;
             let flags = self.mesh_flags[art_index];
 
             if self.mask_indices[art_index].is_empty() {
+                // Because we use greater, no matter what the value of anything in the stencil buffer, this will work.
                 rpass.set_stencil_reference(0);
             } else {
-                rpass.set_stencil_reference(1);
+                cur_stencil_test_ref += 1;
+                rpass.set_stencil_reference(cur_stencil_test_ref as u32);
 
                 for mask_index in self.mask_indices[art_index].iter().copied() {
+                    if mask_index == 4294967295 {
+                        continue;
+                    }
                     let mask_index = mask_index as usize;
                     let mask_flags = self.mesh_flags[mask_index];
 
@@ -479,10 +486,10 @@ fn pipeline_for(
 ) -> RenderPipeline {
     let face_state = match kind {
         PipelineKind::Render(_) => StencilFaceState {
-            compare: CompareFunction::Equal,
-            fail_op: StencilOperation::Zero,
-            depth_fail_op: StencilOperation::Zero,
-            pass_op: StencilOperation::Zero,
+            compare: CompareFunction::LessEqual,
+            fail_op: StencilOperation::Keep,
+            depth_fail_op: StencilOperation::Keep,
+            pass_op: StencilOperation::Keep,
         },
         PipelineKind::Mask => StencilFaceState {
             compare: CompareFunction::Always,
