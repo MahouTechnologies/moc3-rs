@@ -72,7 +72,7 @@ pub async fn run(puppet: Puppet, mut frame_data: PuppetFrameData) {
         .into_rgba8();
 
     let mut renderer = new_renderer(&puppet, &device, &queue, TextureFormat::Bgra8Unorm, &[img]);
-    let mut params = puppet.param_defaults.clone();
+    let params = puppet.param_data().defaults.clone();
     // Somehow the Close button doesn't work... Figure that out
     event_loop.run(move |event, _, _| match event {
         Event::RedrawRequested(_) => {

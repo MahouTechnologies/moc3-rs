@@ -1,18 +1,21 @@
 mod applicator;
+mod collect;
 mod draw_order;
 mod node;
 
 use std::{mem::discriminant, slice};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{vec2, vec3, Vec2, Vec3};
+use glam::{vec2, Vec2, Vec3};
 use indextree::{Arena, NodeId};
 
 use crate::{
-    data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3Data, ParameterType, Version},
+    data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3Data, ParameterType},
     deformer::{
         glue::apply_glue,
-        rotation_deformer::{apply_rotation_deformer, TransformData},
+        rotation_deformer::{
+            apply_rotation_deformer, calculate_rotation_deformer_angle, TransformData,
+        },
         warp_deformer::apply_warp_deformer,
     },
     puppet::{
@@ -22,31 +25,42 @@ use crate::{
 };
 
 use self::{
-    applicator::BlendShapeConstraints,
+    collect::{
+        collect_blend_shapes, collect_colors_to_bind, collect_param_data,
+        collect_parameter_bindings,
+    },
     draw_order::{draw_order_tree, DrawOrderNode},
     node::{DeformerNode, GlueNode},
 };
 
 #[derive(Debug, Clone)]
-pub struct Puppet {
-    pub node_roots: Vec<NodeId>,
-    pub nodes: Arena<DeformerNode>,
-    pub glue_nodes: Vec<GlueNode>,
+#[non_exhaustive]
+pub struct ParamData {
+    pub count: u32,
+    pub ids: Vec<String>,
+    pub defaults: Vec<f32>,
+    pub maxes: Vec<f32>,
+    pub mins: Vec<f32>,
+    pub repeats: Vec<bool>,
+    pub decimals: Vec<u32>,
+    pub types: Vec<ParameterType>,
+}
 
-    pub param_ids: Vec<String>,
-    pub param_defaults: Vec<f32>,
-    pub param_maxes: Vec<f32>,
-    pub param_mins: Vec<f32>,
-    pub param_repeats: Vec<bool>,
-    pub param_decimals: Vec<u32>,
-    pub applicators: Vec<ParamApplicator>,
+#[derive(Debug, Clone)]
+pub struct Puppet {
+    node_roots: Vec<NodeId>,
+    nodes: Arena<DeformerNode>,
+    glue_nodes: Vec<GlueNode>,
+
+    params: ParamData,
+    applicators: Vec<ParamApplicator>,
 
     pub art_mesh_count: u32,
-    pub warp_deformer_count: u32,
-    pub rotation_deformer_count: u32,
-    pub glue_count: u32,
+    warp_deformer_count: u32,
+    rotation_deformer_count: u32,
+    glue_count: u32,
 
-    pub warp_deformer_grid_count: Vec<u32>,
+    warp_deformer_grid_count: Vec<u32>,
 
     pub art_mesh_uvs: Vec<Vec<Vec2>>,
     pub art_mesh_indices: Vec<Vec<u16>>,
@@ -55,8 +69,8 @@ pub struct Puppet {
     pub art_mesh_mask_indices: Vec<Vec<u32>>,
     pub art_mesh_vertexes: Vec<u32>,
 
-    pub draw_order_nodes: Arena<DrawOrderNode>,
-    pub draw_order_roots: Vec<NodeId>,
+    draw_order_nodes: Arena<DrawOrderNode>,
+    draw_order_roots: Vec<NodeId>,
     pub max_draw_order_children: u32,
 }
 
@@ -98,44 +112,38 @@ impl BlendColor {
 
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
-    pub art_mesh_draw_orders: Vec<f32>,
-    pub art_mesh_render_orders: Vec<u32>,
+    corrected_params: Vec<f32>,
 
+    art_mesh_draw_orders: Vec<f32>,
+
+    pub art_mesh_render_orders: Vec<u32>,
     pub art_mesh_data: Vec<Vec<Vec2>>,
     pub art_mesh_opacities: Vec<f32>,
     pub art_mesh_colors: Vec<BlendColor>,
 
-    pub warp_deformer_data: Vec<Vec<Vec2>>,
-    pub rotation_deformer_data: Vec<TransformData>,
-    pub warp_deformer_opacities: Vec<f32>,
-    pub rotation_deformer_opacities: Vec<f32>,
-    pub warp_deformer_colors: Vec<BlendColor>,
-    pub rotation_deformer_colors: Vec<BlendColor>,
+    warp_deformer_data: Vec<Vec<Vec2>>,
+    rotation_deformer_data: Vec<TransformData>,
+    warp_deformer_opacities: Vec<f32>,
+    rotation_deformer_opacities: Vec<f32>,
+    warp_deformer_colors: Vec<BlendColor>,
+    rotation_deformer_colors: Vec<BlendColor>,
 
-    pub deformer_scale_data: Vec<f32>,
-    pub glue_data: Vec<f32>,
+    deformer_scale_data: Vec<f32>,
+    glue_data: Vec<f32>,
 }
 
 impl Puppet {
-    // Figures out how movement of a parent deformer changes the angle of a child deformer.
-    fn calculate_rotation_deformer_angle<F>(origin: Vec2, fudge_factor: f32, transform: F) -> f32
-    where
-        F: Fn(Vec2) -> Vec2,
-    {
-        let direction = Vec2::NEG_Y * fudge_factor;
-        let transformed_origin = transform(origin);
-        let transformed_direction = transform(origin + direction);
-        let ret = transformed_direction - transformed_origin;
-
-        if ret.is_finite() && ret != Vec2::ZERO {
-            direction.angle_between(ret).to_degrees()
-        } else {
-            0.0
-        }
+    pub fn param_data(&self) -> &ParamData {
+        &self.params
     }
-    pub fn update(&self, parameter_values: &[f32], frame_data: &mut PuppetFrameData) {
+
+    pub fn update(&self, input_params: &[f32], frame_data: &mut PuppetFrameData) {
+        for i in 0..input_params.len() {
+            let res = input_params[i].clamp(self.params.mins[i], self.params.maxes[i]);
+            frame_data.corrected_params[i] = res;
+        }
         for applicator in &self.applicators {
-            applicator.apply(&parameter_values, frame_data);
+            applicator.apply(frame_data);
         }
 
         let art_mesh_ptr = frame_data.art_mesh_data.as_mut_ptr();
@@ -245,11 +253,8 @@ impl Puppet {
 
                         // If the child is a rotation deformer, we need to fix up the angle.
                         if let Some(child_angle) = child_angle {
-                            let angle_diff = Self::calculate_rotation_deformer_angle(
-                                child_changes[0],
-                                0.1,
-                                transform,
-                            );
+                            let angle_diff =
+                                calculate_rotation_deformer_angle(child_changes[0], 0.1, transform);
 
                             *child_angle += angle_diff;
                             child_changes[0] = transform(child_changes[0]);
@@ -287,7 +292,7 @@ impl Puppet {
                                 ret
                             };
 
-                            let angle_diff = Self::calculate_rotation_deformer_angle(
+                            let angle_diff = calculate_rotation_deformer_angle(
                                 child_changes[0],
                                 10.0,
                                 transform,
@@ -345,262 +350,6 @@ impl Puppet {
 
         draw_order_tree(&self.draw_order_nodes, self.draw_order_roots[0], frame_data);
     }
-}
-
-fn collect_blend_shape_constraints(
-    read: &Moc3Data,
-    constraint_index_start: usize,
-    constraint_index_count: usize,
-) -> Vec<BlendShapeConstraints> {
-    let blend_shape_constraints = read.table.blend_shape_constraints.as_ref().unwrap();
-    let blend_shape_constraint_indices =
-        read.table.blend_shape_constraint_indices.as_ref().unwrap();
-    let blend_shape_constraint_values = read.table.blend_shape_constraint_values.as_ref().unwrap();
-
-    let mut ret = Vec::new();
-
-    for i in constraint_index_start..constraint_index_start + constraint_index_count {
-        let index =
-            blend_shape_constraint_indices.blend_shape_constraint_sources_indices[i] as usize;
-
-        let parameter_index = blend_shape_constraints.parameter_indices[index] as usize;
-        let value_start =
-            blend_shape_constraints.blend_shape_constraint_value_sources_starts[index] as usize;
-        let value_count =
-            blend_shape_constraints.blend_shape_constraint_value_sources_counts[index] as usize;
-
-        ret.push(BlendShapeConstraints {
-            parameter_index,
-            keys: blend_shape_constraint_values.keys[value_start..value_start + value_count]
-                .to_owned(),
-            weights: blend_shape_constraint_values.weights[value_start..value_start + value_count]
-                .to_owned(),
-        })
-    }
-
-    ret
-}
-
-fn collect_blend_shapes(
-    read: &Moc3Data,
-    blend_shape_parameter_bindings_to_parameter: &[usize],
-    applicators: &mut Vec<ParamApplicator>,
-) {
-    if read.header.version < Version::V4_02 {
-        return;
-    }
-
-    let positions = read.positions();
-    let keys = read.keys();
-
-    let blend_shape_keyform_bindings = read.table.blend_shape_keyform_bindings.as_ref().unwrap();
-    let blend_shape_parameter_bindings =
-        read.table.blend_shape_parameter_bindings.as_ref().unwrap();
-
-    {
-        let blend_shape_art_meshes = read.table.blend_shape_art_meshes.as_ref().unwrap();
-
-        let art_meshes = &read.table.art_meshes;
-        let art_mesh_keyforms = &read.table.art_mesh_keyforms;
-
-        for i in 0..read.table.count_info.blend_shape_art_meshes {
-            let i = i as usize;
-
-            let target_index = blend_shape_art_meshes.target_indices[i] as usize;
-            let vertexes = art_meshes.vertex_counts[target_index] as usize;
-            let start =
-                blend_shape_art_meshes.blend_shape_keyform_binding_sources_starts[i] as usize;
-            let count: usize =
-                blend_shape_art_meshes.blend_shape_keyform_binding_sources_counts[i] as usize;
-
-            for a in start..start + count {
-                let param_binding_index = blend_shape_keyform_bindings
-                    .blend_shape_parameter_binding_sources_indices[a]
-                    as usize;
-                let keyform_start =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_starts[a] as usize;
-                let keyform_count =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_counts[a] as usize;
-
-                let mut positions_to_bind = Vec::new();
-                for keyform in keyform_start..keyform_start + keyform_count {
-                    let position_start =
-                        art_mesh_keyforms.keyform_position_sources_starts[keyform] as usize / 2;
-                    positions_to_bind
-                        .push(positions[position_start..position_start + vertexes].to_owned());
-                }
-
-                let opacities_to_bind = art_mesh_keyforms.opacities
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
-                let draw_orders_to_bind = art_mesh_keyforms.draw_orders
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
-
-                let x = {
-                    let key_starts = blend_shape_parameter_bindings.keys_sources_starts
-                        [param_binding_index] as usize;
-                    let key_counts = blend_shape_parameter_bindings.keys_sources_counts
-                        [param_binding_index] as usize;
-
-                    (
-                        keys[key_starts..key_starts + key_counts].to_owned(),
-                        blend_shape_parameter_bindings_to_parameter[param_binding_index],
-                    )
-                };
-
-                let constraint_index_start = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_starts[a]
-                    as usize;
-                let constraint_index_count = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_counts[a]
-                    as usize;
-
-                applicators.push(ParamApplicator {
-                    kind_index: i as u32,
-                    values: ApplicatorKind::ArtMesh(
-                        positions_to_bind,
-                        opacities_to_bind,
-                        draw_orders_to_bind,
-                        Vec::new(),
-                    ),
-                    data: vec![x],
-                    blend: Some(collect_blend_shape_constraints(
-                        read,
-                        constraint_index_start,
-                        constraint_index_count,
-                    )),
-                });
-            }
-        }
-    }
-
-    {
-        let blend_shape_warp_deformers = read.table.blend_shape_warp_deformers.as_ref().unwrap();
-
-        let warp_deformers = &read.table.warp_deformers;
-        let warp_deformer_keyforms = &read.table.warp_deformer_keyforms;
-
-        for i in 0..read.table.count_info.blend_shape_warp_deformers {
-            let i = i as usize;
-
-            let target_index = blend_shape_warp_deformers.target_indices[i] as usize;
-            let vertexes = warp_deformers.vertex_counts[target_index] as usize;
-            let start =
-                blend_shape_warp_deformers.blend_shape_keyform_binding_sources_starts[i] as usize;
-            let count =
-                blend_shape_warp_deformers.blend_shape_keyform_binding_sources_counts[i] as usize;
-
-            for a in start..start + count {
-                let param_binding_index = blend_shape_keyform_bindings
-                    .blend_shape_parameter_binding_sources_indices[a]
-                    as usize;
-                let keyform_start =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_starts[a] as usize;
-                let keyform_count =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_counts[a] as usize;
-
-                let mut positions_to_bind = Vec::new();
-                for keyform in keyform_start..keyform_start + keyform_count {
-                    let position_start = warp_deformer_keyforms.keyform_position_sources_starts
-                        [keyform] as usize
-                        / 2;
-                    positions_to_bind
-                        .push(positions[position_start..position_start + vertexes].to_owned());
-                }
-
-                let opacities_to_bind = warp_deformer_keyforms.opacities
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
-
-                let x = {
-                    let key_starts = blend_shape_parameter_bindings.keys_sources_starts
-                        [param_binding_index] as usize;
-                    let key_counts = blend_shape_parameter_bindings.keys_sources_counts
-                        [param_binding_index] as usize;
-
-                    (
-                        keys[key_starts..key_starts + key_counts].to_owned(),
-                        blend_shape_parameter_bindings_to_parameter[param_binding_index],
-                    )
-                };
-
-                let constraint_index_start = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_starts[a]
-                    as usize;
-                let constraint_index_count = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_counts[a]
-                    as usize;
-
-                applicators.push(ParamApplicator {
-                    kind_index: i as u32,
-                    values: ApplicatorKind::WarpDeformer(
-                        positions_to_bind,
-                        opacities_to_bind,
-                        Vec::new(),
-                    ),
-                    data: vec![x],
-                    blend: Some(collect_blend_shape_constraints(
-                        read,
-                        constraint_index_start,
-                        constraint_index_count,
-                    )),
-                });
-            }
-        }
-    }
-}
-
-fn collect_colors_to_bind(read: &Moc3Data, colors_start: usize, count: usize) -> Vec<BlendColor> {
-    let keyform_multiply_colors = read.table.keyform_multiply_colors.as_ref().unwrap();
-    let keyform_screen_colors = read.table.keyform_screen_colors.as_ref().unwrap();
-
-    let mut ret = Vec::with_capacity(count);
-
-    for i in colors_start..colors_start + count {
-        let multiply_color = vec3(
-            keyform_multiply_colors.red[i],
-            keyform_multiply_colors.green[i],
-            keyform_multiply_colors.blue[i],
-        );
-
-        let screen_color = vec3(
-            keyform_screen_colors.red[i],
-            keyform_screen_colors.green[i],
-            keyform_screen_colors.blue[i],
-        );
-        ret.push(BlendColor {
-            multiply_color,
-            screen_color,
-        });
-    }
-    ret
-}
-
-fn collect_parameter_bindings(
-    read: &Moc3Data,
-    parameter_bindings_to_parameter: &[usize],
-    parameter_bindings_start: usize,
-    parameter_bindings_count: usize,
-) -> Vec<(Vec<f32>, usize)> {
-    let parameter_bindings = &read.table.parameter_bindings;
-    let parameter_binding_indices = &read.table.parameter_binding_indices;
-    let keys = read.keys();
-
-    let mut ret = Vec::new();
-
-    for i in parameter_bindings_start..parameter_bindings_start + parameter_bindings_count {
-        let ind = parameter_binding_indices.binding_sources_indices[i] as usize;
-        let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-        let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
-
-        ret.push((
-            keys[key_starts..key_starts + key_counts].to_owned(),
-            parameter_bindings_to_parameter[ind],
-        ))
-    }
-
-    ret
 }
 
 pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
@@ -1038,27 +787,14 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             .push((warp_deformers.rows[i] + 1) * (warp_deformers.columns[i] + 1));
     }
 
-    let mut param_repeats = Vec::new();
-    for i in parameters.is_repeat.iter() {
-        param_repeats.push(*i == 1);
-    }
-
-    let mut param_ids = Vec::new();
-    for i in parameters.ids.iter() {
-        param_ids.push(i.name.to_string());
-    }
+    let params = collect_param_data(read);
 
     Puppet {
         node_roots,
         nodes: node_arena,
         glue_nodes,
 
-        param_ids,
-        param_defaults: parameters.default_values.clone(),
-        param_maxes: parameters.max_values.clone(),
-        param_mins: parameters.min_values.clone(),
-        param_repeats,
-        param_decimals: parameters.decimal_places.clone(),
+        params,
         applicators,
 
         art_mesh_count: read.table.count_info.art_meshes,
@@ -1093,6 +829,8 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
     }
 
     PuppetFrameData {
+        corrected_params: puppet.params.defaults.clone(),
+
         art_mesh_draw_orders: vec![0.0; puppet.art_mesh_count as usize],
         art_mesh_render_orders: vec![0; puppet.art_mesh_count as usize],
 

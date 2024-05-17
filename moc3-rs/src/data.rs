@@ -253,6 +253,7 @@ pub struct ParameterOffsets {
 
 #[derive(BinRead, Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 #[br(repr = u32)]
+#[non_exhaustive]
 pub enum ParameterType {
     Normal = 0,
     BlendShape = 1,

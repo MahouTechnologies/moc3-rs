@@ -126,7 +126,8 @@ impl ParamApplicator {
         }
     }
 
-    pub fn apply(&self, parameters: &[f32], frame_data: &mut PuppetFrameData) {
+    pub fn apply(&self, frame_data: &mut PuppetFrameData) {
+        let parameters = &frame_data.corrected_params;
         let ind = self.kind_index as usize;
         match &self.values {
             ApplicatorKind::ArtMesh(choices, opacities, draw_orders, colors) => {

@@ -32,15 +32,6 @@ pub struct RotationDeformerData {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamData {
-    pub name: String,
-    pub max: f32,
-    pub min: f32,
-    pub default: f32,
-    pub decimals: u32,
-}
-
-#[derive(Debug, Clone)]
 pub struct GlueNode {
     pub id: String,
     pub kind_index: u32,
