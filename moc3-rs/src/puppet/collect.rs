@@ -7,7 +7,6 @@ use crate::{
     puppet::applicator::{ApplicatorKind, ParamApplicator},
 };
 
-
 pub fn collect_blend_shape_constraints(
     read: &Moc3Data,
     constraint_index_start: usize,
@@ -212,7 +211,11 @@ pub fn collect_blend_shapes(
     }
 }
 
-pub fn collect_colors_to_bind(read: &Moc3Data, colors_start: usize, count: usize) -> Vec<BlendColor> {
+pub fn collect_colors_to_bind(
+    read: &Moc3Data,
+    colors_start: usize,
+    count: usize,
+) -> Vec<BlendColor> {
     let keyform_multiply_colors = read.table.keyform_multiply_colors.as_ref().unwrap();
     let keyform_screen_colors = read.table.keyform_screen_colors.as_ref().unwrap();
 
