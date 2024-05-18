@@ -117,7 +117,7 @@ pub fn collect_blend_shapes(
                     as usize;
 
                 applicators.push(ParamApplicator {
-                    kind_index: i as u32,
+                    kind_index: target_index as u32,
                     values: ApplicatorKind::ArtMesh(
                         positions_to_bind,
                         opacities_to_bind,
@@ -193,7 +193,7 @@ pub fn collect_blend_shapes(
                     as usize;
 
                 applicators.push(ParamApplicator {
-                    kind_index: i as u32,
+                    kind_index: target_index as u32,
                     values: ApplicatorKind::WarpDeformer(
                         positions_to_bind,
                         opacities_to_bind,
