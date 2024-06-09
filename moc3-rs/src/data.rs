@@ -108,7 +108,7 @@ pub struct PartOffsets {
     #[br(args { inner: args! { count } })]
     pub is_enabled: FilePtr32<Vec<u32>>,
     #[br(args { inner: args! { count } })]
-    pub parent_part_indices: FilePtr32<Vec<u32>>,
+    pub parent_part_indices: FilePtr32<Vec<i32>>,
 }
 
 #[derive(BinRead, Debug)]
@@ -548,7 +548,7 @@ pub struct DrawOrderGroupObjectOffsets {
     #[br(args { inner: args! { count } })]
     pub indices: FilePtr32<Vec<u32>>,
     #[br(args { inner: args! { count } })]
-    pub self_indices: FilePtr32<Vec<u32>>,
+    pub self_indices: FilePtr32<Vec<i32>>,
 }
 
 #[derive(BinRead, Debug)]

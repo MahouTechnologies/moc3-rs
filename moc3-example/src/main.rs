@@ -73,13 +73,14 @@ pub async fn run(puppet: Puppet, mut frame_data: PuppetFrameData) {
 
     let mut renderer = new_renderer(&puppet, &device, &queue, TextureFormat::Bgra8Unorm, &[img]);
     let params = puppet.param_data().defaults.clone();
+    let opacities = vec![1.0; puppet.part_count as usize];
     // Somehow the Close button doesn't work... Figure that out
     event_loop.run(move |event, _, _| match event {
         Event::RedrawRequested(_) => {
             let output = surface.get_current_texture().unwrap();
             let view = (output.texture).create_view(&wgpu::TextureViewDescriptor::default());
 
-            puppet.update(&params, &mut frame_data);
+            puppet.update(&params, &opacities, &mut frame_data);
 
             renderer.prepare(&device, &queue, output.texture.size(), &frame_data);
             let mut encoder =

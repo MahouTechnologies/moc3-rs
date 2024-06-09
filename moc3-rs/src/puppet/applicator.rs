@@ -79,6 +79,8 @@ pub enum ApplicatorKind {
     RotationDeformer(Vec<TransformData>, Vec<f32>, Vec<BlendColor>),
     // intensities
     Glue(Vec<f32>),
+    // draw orders
+    Part(Vec<f32>),
 }
 
 impl ParamApplicator {
@@ -253,6 +255,14 @@ impl ParamApplicator {
                     parameters,
                     slice::from_mut(&mut frame_data.glue_data[ind]),
                     |a| slice::from_ref(&intensities[a]),
+                );
+            }
+            ApplicatorKind::Part(draw_orders) => {
+                frame_data.part_draw_orders[ind] = 0.0;
+                self.do_interpolate(
+                    parameters,
+                    slice::from_mut(&mut frame_data.part_draw_orders[ind]),
+                    |a| slice::from_ref(&draw_orders[a]),
                 );
             }
         }

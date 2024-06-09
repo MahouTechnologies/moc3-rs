@@ -31,9 +31,8 @@ fn draw_order_tree_rec(
             DrawOrderNode::ArtMesh { index } => {
                 orders.push((frame_data.art_mesh_draw_orders[*index as usize].round(), i));
             }
-            DrawOrderNode::Part { .. } => {
-                // I haven't done parts yet
-                orders.push((500.0, i));
+            DrawOrderNode::Part { index } => {
+                orders.push((frame_data.part_draw_orders[*index as usize], i));
             }
         }
     }

@@ -8,6 +8,14 @@ pub struct DeformerNode {
 }
 
 #[derive(Debug, Clone)]
+pub struct PartNode {
+    pub id: String,
+    pub kind_index: u32,
+    pub is_visible: bool,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
 pub enum NodeKind {
     ArtMesh(ArtMeshData),
     WarpDeformer(WarpDeformerData, u32),

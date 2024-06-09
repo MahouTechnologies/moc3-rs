@@ -8,6 +8,7 @@ use std::{mem::discriminant, slice};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, Vec2, Vec3};
 use indextree::{Arena, NodeId};
+use node::PartNode;
 
 use crate::{
     data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3Data, ParameterType},
@@ -50,7 +51,11 @@ pub struct ParamData {
 pub struct Puppet {
     node_roots: Vec<NodeId>,
     nodes: Arena<DeformerNode>,
+
     glue_nodes: Vec<GlueNode>,
+
+    part_roots: Vec<NodeId>,
+    parts: Arena<PartNode>,
 
     params: ParamData,
     applicators: Vec<ParamApplicator>,
@@ -58,6 +63,7 @@ pub struct Puppet {
     pub art_mesh_count: u32,
     warp_deformer_count: u32,
     rotation_deformer_count: u32,
+    pub part_count: u32,
     glue_count: u32,
 
     warp_deformer_grid_count: Vec<u32>,
@@ -70,8 +76,7 @@ pub struct Puppet {
     pub art_mesh_vertexes: Vec<u32>,
 
     draw_order_nodes: Arena<DrawOrderNode>,
-    draw_order_roots: Vec<NodeId>,
-    pub max_draw_order_children: u32,
+    draw_order_root: NodeId,
 }
 
 #[derive(Pod, Zeroable, Debug, Clone, Copy)]
@@ -113,8 +118,10 @@ impl BlendColor {
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
     corrected_params: Vec<f32>,
+    pub calculated_part_opacities: Vec<f32>,
 
     art_mesh_draw_orders: Vec<f32>,
+    part_draw_orders: Vec<f32>,
 
     pub art_mesh_render_orders: Vec<u32>,
     pub art_mesh_data: Vec<Vec<Vec2>>,
@@ -137,11 +144,33 @@ impl Puppet {
         &self.params
     }
 
-    pub fn update(&self, input_params: &[f32], frame_data: &mut PuppetFrameData) {
+    pub fn update(
+        &self,
+        input_params: &[f32],
+        part_opacities: &[f32],
+        frame_data: &mut PuppetFrameData,
+    ) {
         for i in 0..input_params.len() {
             let res = input_params[i].clamp(self.params.mins[i], self.params.maxes[i]);
             frame_data.corrected_params[i] = res;
         }
+
+        for root in self.part_roots.iter().copied() {
+            let root_node = self.parts[root].get();
+            let root_index = root_node.kind_index as usize;
+            frame_data.calculated_part_opacities[root_index] = part_opacities[root_index];
+            for id in root.descendants(&self.parts).skip(1) {
+                let cur = &self.parts[id];
+                let cur_index = cur.get().kind_index as usize;
+                let parent = &self.parts[cur.parent().unwrap()];
+                let parent_index = parent.get().kind_index as usize;
+
+                frame_data.calculated_part_opacities[cur_index] = part_opacities[cur_index];
+                frame_data.calculated_part_opacities[cur_index] *=
+                    frame_data.calculated_part_opacities[parent_index];
+            }
+        }
+
         for applicator in &self.applicators {
             applicator.apply(frame_data);
         }
@@ -318,6 +347,11 @@ impl Puppet {
 
                 // Propogate down the opacity numbers
                 *child_opacity *= parent_opacity;
+                // The parent part also has opacity to deal with
+                if child.parent_part_index != -1 {
+                    *child_opacity *=
+                        frame_data.calculated_part_opacities[child.parent_part_index as usize];
+                }
                 *child_color = parent_color.blend(&child_color);
 
                 match &child.data {
@@ -348,7 +382,7 @@ impl Puppet {
             )
         }
 
-        draw_order_tree(&self.draw_order_nodes, self.draw_order_roots[0], frame_data);
+        draw_order_tree(&self.draw_order_nodes, self.draw_order_root, frame_data);
     }
 }
 
@@ -392,12 +426,24 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         }
     }
 
+    // Everything down from here, delimited by horizontal ASCII lines, represents all of the possible
+    // things that can affect the final model directly. This includes deformers (both rotation and warp),
+    // art mesh deformation, as well as glues. Here, the ParamApplicators for regular parameters as well as
+    // blendshapes occurs.
+
+    // ----- BEGIN PARAMETER STUFF -----
+
     let mut applicators = Vec::new();
+
+    let mut node_roots: Vec<NodeId> = Vec::new();
     let mut node_arena = Arena::<DeformerNode>::with_capacity(
         (read.table.count_info.art_meshes
             + read.table.count_info.warp_deformers
             + read.table.count_info.rotation_deformers) as usize,
     );
+
+    let mut deformer_indices_to_node_ids: Vec<Option<NodeId>> =
+        vec![None; read.table.count_info.deformers as usize];
 
     let deformers = &read.table.deformers;
     let warp_deformers = &read.table.warp_deformers;
@@ -406,17 +452,6 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     let rotation_deformers = &read.table.rotation_deformers;
     let rotation_deformer_keyforms = &read.table.rotation_deformer_keyforms;
     let rotation_deformer_keyforms_v402 = read.table.rotation_deformer_keyforms_v402.as_ref();
-
-    // Everything down from here, delimited by horizontal ASCII lines, represents all of the possible
-    // things that can affect the final model directly. This includes deformers (both rotation and warp),
-    // art mesh deformation, as well as glues. Here, the ParamApplicators for regular parameters as well as
-    // blendshapes occurs.
-
-    // ----- BEGIN PARAMETER STUFF -----
-    let mut deformer_indices_to_node_ids: Vec<Option<NodeId>> =
-        vec![None; read.table.count_info.deformers as usize];
-
-    let mut node_roots: Vec<NodeId> = Vec::new();
 
     for i in 0..read.table.count_info.deformers {
         let i: usize = i as usize;
@@ -722,6 +757,113 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             blend: None,
         });
     }
+
+    let mut glue_nodes = Vec::new();
+
+    let glues = &read.table.glues;
+    let glue_infos = &read.table.glue_infos;
+    let glue_keyforms = &read.table.glue_keyforms;
+    for i in 0..read.table.count_info.glues {
+        let i = i as usize;
+
+        let glue_info_start = glues.glue_info_sources_starts[i] as usize;
+        let glue_info_count = glues.glue_info_sources_counts[i] as usize;
+
+        let binding_index = glues.keyform_binding_sources_indices[i] as usize;
+        let start = glues.keyform_sources_starts[i] as usize;
+        let count = glues.keyform_sources_counts[i] as usize;
+
+        let mesh_indices =
+            &glue_infos.vertex_indices[glue_info_start..glue_info_start + glue_info_count];
+        let weights = &glue_infos.weights[glue_info_start..glue_info_start + glue_info_count];
+
+        let intensities_to_bind = glue_keyforms.intensities[start..start + count].to_vec();
+
+        glue_nodes.push(GlueNode {
+            id: glues.ids[i].name.to_string(),
+            kind_index: i as u32,
+            art_mesh_index: [glues.art_mesh_indices_a[i], glues.art_mesh_indices_b[i]],
+            mesh_indices: mesh_indices.to_vec(),
+            weights: weights.to_vec(),
+        });
+
+        let parameter_bindings_count =
+            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
+        let parameter_bindings_start =
+            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+
+        applicators.push(ParamApplicator {
+            kind_index: i as u32,
+            values: ApplicatorKind::Glue(intensities_to_bind),
+            data: collect_parameter_bindings(
+                read,
+                &parameter_bindings_to_parameter,
+                parameter_bindings_start,
+                parameter_bindings_count,
+            ),
+            blend: None,
+        });
+    }
+
+    let mut part_roots: Vec<NodeId> = Vec::new();
+    let mut part_arena = Arena::<PartNode>::with_capacity(read.table.count_info.parts as usize);
+
+    let mut part_indices_to_node_ids: Vec<Option<NodeId>> =
+        vec![None; read.table.count_info.parts as usize];
+
+    let part_data = &read.table.parts;
+    let part_keyforms = &read.table.part_keyforms;
+
+    for i in 0..read.table.count_info.parts {
+        let i = i as usize;
+
+        let binding_index = part_data.keyform_binding_sources_indices[i] as usize;
+        let start = part_data.keyform_sources_starts[i] as usize;
+        let count = part_data.keyform_sources_counts[i] as usize;
+
+        let draw_orders_to_bind = part_keyforms.draw_orders[start..start + count].to_vec();
+
+        {
+            let parent_part_index = part_data.parent_part_indices[i];
+
+            let node_to_append = PartNode {
+                id: part_data.ids[i].name.to_string(),
+                kind_index: i as u32,
+                is_enabled: part_data.is_enabled[i] != 0,
+                is_visible: part_data.is_visible[i] != 0,
+            };
+
+            let res = if parent_part_index != -1 {
+                part_indices_to_node_ids[parent_part_index as usize]
+                    .unwrap()
+                    .append_value(node_to_append, &mut part_arena)
+            } else {
+                let it: NodeId = part_arena.new_node(node_to_append);
+                part_roots.push(it);
+                it
+            };
+
+            part_indices_to_node_ids[i] = Some(res);
+        }
+
+        let parameter_bindings_count =
+            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
+        let parameter_bindings_start =
+            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+
+        applicators.push(ParamApplicator {
+            kind_index: i as u32,
+            values: ApplicatorKind::Part(draw_orders_to_bind),
+            data: collect_parameter_bindings(
+                read,
+                &parameter_bindings_to_parameter,
+                parameter_bindings_start,
+                parameter_bindings_count,
+            ),
+            blend: None,
+        });
+    }
+
     // ----- END PARAMETER STUFF -----
     collect_blend_shapes(
         read,
@@ -741,18 +883,17 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         read.table.count_info.draw_order_group_objects as usize,
     );
 
-    let mut draw_order_roots: Vec<Option<NodeId>> =
+    let mut draw_order_indices_to_node_ids: Vec<Option<NodeId>> =
         vec![None; read.table.count_info.draw_order_groups as usize];
 
-    let mut max_draw_order_children = 0;
-    draw_order_roots[0] = Some(draw_order_nodes.new_node(DrawOrderNode::Part { index: u32::MAX }));
+    draw_order_indices_to_node_ids[0] =
+        Some(draw_order_nodes.new_node(DrawOrderNode::Part { index: u32::MAX }));
 
     for i in 0..read.table.count_info.draw_order_groups {
         let i = i as usize;
 
         let object_sources_start = draw_order_groups.object_sources_starts[i];
         let object_sources_count = draw_order_groups.object_sources_counts[i];
-        max_draw_order_children = max_draw_order_children.max(object_sources_count);
 
         for a in object_sources_start..(object_sources_start + object_sources_count) {
             let a = a as usize;
@@ -765,12 +906,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                     DrawOrderNode::Part { index: type_index }
                 };
 
-            let res = draw_order_roots[i]
+            let res = draw_order_indices_to_node_ids[i]
                 .unwrap()
                 .append_value(to_append, &mut draw_order_nodes);
             let self_index = draw_order_group_objects.self_indices[a];
-            if self_index != u32::MAX {
-                draw_order_roots[self_index as usize] = Some(res);
+            if self_index != -1 {
+                draw_order_indices_to_node_ids[self_index as usize] = Some(res);
             }
         }
     }
@@ -792,7 +933,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     Puppet {
         node_roots,
         nodes: node_arena,
+
         glue_nodes,
+
+        part_roots,
+        parts: part_arena,
 
         params,
         applicators,
@@ -800,6 +945,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         art_mesh_count: read.table.count_info.art_meshes,
         warp_deformer_count: read.table.count_info.warp_deformers,
         rotation_deformer_count: read.table.count_info.rotation_deformers,
+        part_count: read.table.count_info.parts,
         glue_count: read.table.count_info.glues,
 
         warp_deformer_grid_count,
@@ -812,8 +958,7 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         art_mesh_vertexes: read.table.art_meshes.vertex_counts.clone(),
 
         draw_order_nodes,
-        draw_order_roots: draw_order_roots.into_iter().map(|x| x.unwrap()).collect(),
-        max_draw_order_children,
+        draw_order_root: draw_order_indices_to_node_ids[0].unwrap(),
     }
 }
 
@@ -830,8 +975,11 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
 
     PuppetFrameData {
         corrected_params: puppet.params.defaults.clone(),
+        calculated_part_opacities: vec![1.0; puppet.part_count as usize],
 
         art_mesh_draw_orders: vec![0.0; puppet.art_mesh_count as usize],
+        part_draw_orders: vec![0.0; puppet.part_count as usize],
+
         art_mesh_render_orders: vec![0; puppet.art_mesh_count as usize],
 
         art_mesh_data,
