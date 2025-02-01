@@ -53,18 +53,31 @@ pub fn apply_rotation_deformer(
 }
 
 // Figures out how movement of a parent deformer changes the angle of a child deformer.
-pub fn calculate_rotation_deformer_angle<F>(origin: Vec2, fudge_factor: f32, transform: F) -> f32
+fn calculate_rotation_deformer_angle<F>(origin: Vec2, base_scale_factor: f32, transform: F) -> f32
 where
     F: Fn(Vec2) -> Vec2,
 {
-    let direction = Vec2::NEG_Y * fudge_factor;
+    let direction = Vec2::NEG_Y * base_scale_factor;
     let transformed_origin = transform(origin);
-    let transformed_direction = transform(origin + direction);
-    let ret = transformed_direction - transformed_origin;
 
-    if ret.is_finite() && ret != Vec2::ZERO {
-        direction.angle_between(ret).to_degrees()
-    } else {
-        0.0
+    for i in 0..10 {
+        let transformed_direction = transform(origin + direction * 0.1f32.powi(i));
+        let ret = transformed_direction - transformed_origin;
+
+        let angle = if ret.is_finite() && ret != Vec2::ZERO {
+            direction.angle_between(ret).to_degrees()
+        } else {
+            let inv_direction = transform(origin - direction * 0.1f32.powi(i));
+            let inv_ret = inv_direction - transformed_origin;
+            if inv_ret.is_finite() && inv_ret != Vec2::ZERO {
+                inv_direction.angle_between(inv_ret).to_degrees()
+            } else {
+                continue;
+            }
+        };
+
+        return angle;
     }
+
+    0.0
 }
