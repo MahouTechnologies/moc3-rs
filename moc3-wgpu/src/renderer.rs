@@ -2,6 +2,7 @@ use bytemuck::cast_slice;
 use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::{Mat4, Vec2, Vec3};
 use image::RgbaImage;
+use util::TextureDataOrder;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     *,
@@ -113,7 +114,7 @@ impl Renderer {
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Clear(Color::TRANSPARENT),
-                    store: true,
+                    store: StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
@@ -121,10 +122,12 @@ impl Renderer {
                 depth_ops: None,
                 stencil_ops: Some(Operations {
                     load: LoadOp::Clear(0),
-                    store: true,
+                    store: StoreOp::Store,
                 }),
             }),
             label: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
         });
 
         let mut cur_stencil_test_ref: u8 = 0;
@@ -132,6 +135,10 @@ impl Renderer {
         for art_index in self.render_orders.iter().copied() {
             let art_index = art_index as usize;
             let flags = self.mesh_flags[art_index];
+
+            if self.index_buffers[art_index].size() == 0 {
+                continue;
+            }
 
             if self.mask_indices[art_index].is_empty() {
                 // Because we use greater, no matter what the value of anything in the stencil buffer, this will work.
@@ -253,6 +260,7 @@ pub fn new_renderer(
                 view_formats: &[],
                 label: None,
             },
+            TextureDataOrder::default(),
             &tex,
         );
 
@@ -549,16 +557,17 @@ fn pipeline_for(
                 PipelineKind::Render(_) => include_wgsl!("./shader/frag.wgsl"),
                 PipelineKind::Mask => include_wgsl!("./shader/mask.frag.wgsl"),
             }),
-            entry_point: "fs_main",
+            entry_point: Some("fs_main"),
             targets: &[Some(ColorTargetState {
                 format: texture_format,
                 blend,
                 write_mask,
             })],
+            compilation_options: PipelineCompilationOptions::default(),
         }),
         vertex: VertexState {
             module: &device.create_shader_module(include_wgsl!("./shader/vert.wgsl")),
-            entry_point: "vs_main",
+            entry_point: Some("vs_main"),
             buffers: &[
                 VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vec2>() as BufferAddress,
@@ -571,6 +580,7 @@ fn pipeline_for(
                     attributes: &vertex_attr_array![1 => Float32x2],
                 },
             ],
+            compilation_options: PipelineCompilationOptions::default(),
         },
         primitive: PrimitiveState {
             front_face: FrontFace::Cw,
@@ -586,5 +596,6 @@ fn pipeline_for(
         }),
         multisample: MultisampleState::default(),
         multiview: None,
+        cache: None,
     })
 }

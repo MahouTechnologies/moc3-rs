@@ -7,3 +7,10 @@ members = [
     "moc3-wgpu",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+binrw = "0.14.1"
+bytemuck = "1.22.0"
+glam = "0.29"
+wgpu = "24.0.3"
+winit = "0.30.9"

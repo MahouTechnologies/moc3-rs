@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-binrw = "0.11.1"
-bytemuck = { version = "1.13.1", features = ["extern_crate_alloc", "derive"] }
-glam = { version = "0.24.1", features = ["bytemuck"] }
+binrw = "0.14.1"
+bytemuck = { workspace = true, features = ["extern_crate_alloc", "derive"] }
+glam = { workspace = true, features = ["bytemuck"] }
 indextree = "4.6.0"
 modular-bitfield = "0.11.2"
 thiserror = "1.0.48"

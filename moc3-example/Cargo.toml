@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-binrw = "0.11.1"
-glam = "0.24.1"
+binrw = { workspace = true }
+glam = { workspace = true }
 image = "0.24.7"
 moc3-rs = { path = "../moc3-rs" }
 moc3-wgpu = { path = "../moc3-wgpu" }
 pollster = "0.3.0"
 rand = "0.8.5"
-wgpu = "0.17.1"
-winit = "0.28.6"
+wgpu = { workspace = true }
+winit = { workspace = true }

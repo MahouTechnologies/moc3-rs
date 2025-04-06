@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = { version = "1.13.1", features = ["extern_crate_alloc", "derive"] }
-encase = { version = "0.6.1", features = ["glam"] }
-glam = { version = "0.24.1", features = ["bytemuck"] }
+bytemuck = { workspace = true, features = ["extern_crate_alloc", "derive"] }
+encase = { version = "0.10.0", features = ["glam"] }
+glam = { workspace = true, features = ["bytemuck"] }
 image = "0.24.7"
 moc3-rs = { path = "../moc3-rs" }
-wgpu = "0.17.1"
+wgpu = { workspace = true }

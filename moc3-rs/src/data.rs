@@ -600,7 +600,6 @@ pub struct GlueKeyformOffsets {
     version: Version
 })]
 pub struct SectionOffsetTable {
-    #[br(deref_now)]
     #[br(args {
         inner: args! { version }
     })]
@@ -735,11 +734,10 @@ impl Moc3Data {
     // L2D indexes this in elements of f32, not Vec2, so divide
     // indices by 2 before using this.
     pub fn positions(&self) -> &[Vec2] {
-        self.table.keyform_positions.coords.value.as_ref().unwrap()
+        &self.table.keyform_positions.coords.value
     }
 
     pub fn uvs(&self) -> &[Vec2] {
-        // TODO: nya want deref
-        self.table.uvs.uvs.value.as_ref().unwrap()
+        &self.table.uvs.uvs.value
     }
 }
