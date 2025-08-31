@@ -9,8 +9,9 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-binrw = "0.14.1"
-bytemuck = "1.22.0"
-glam = "0.29"
-wgpu = "24.0.3"
-winit = "0.30.9"
+binrw = "0.15.0"
+bytemuck = "1.23.2"
+glam = "0.30.5"
+image = "0.25.6"
+wgpu = "26.0.1"
+winit = "0.30.12"

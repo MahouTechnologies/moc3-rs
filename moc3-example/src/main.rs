@@ -28,7 +28,7 @@ fn main() {
     let frame_data = framedata_for_puppet(&puppet);
 
     let get_img = |a: &str| {
-        image::io::Reader::open(a)
+        image::ImageReader::open(a)
             .unwrap()
             .decode()
             .unwrap()
@@ -122,7 +122,7 @@ impl GfxState {
             .unwrap();
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(&wgpu::DeviceDescriptor::default())
             .await
             .unwrap();
 
@@ -203,10 +203,10 @@ pub fn run(puppet: Puppet, frame_data: PuppetFrameData, textures: Vec<RgbaImage>
     let params = puppet.param_data().defaults.clone();
     let opacities = vec![1.0; puppet.part_count as usize];
     let mut sts = params.clone();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     for i in sts.iter_mut() {
-        *i = rng.gen();
+        *i = rng.random();
     }
 
     let state = AppState {

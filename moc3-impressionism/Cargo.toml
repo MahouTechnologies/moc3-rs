@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 glam = { workspace = true, features = ["bytemuck", "serde"] }
 moc3-rs = { path = "../moc3-rs" }
-serde = { version = "1.0.152", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }

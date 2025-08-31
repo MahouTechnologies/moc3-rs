@@ -111,6 +111,7 @@ impl Renderer {
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
             color_attachments: &[Some(RenderPassColorAttachment {
                 view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Clear(Color::TRANSPARENT),
