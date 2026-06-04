@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use eframe::{
     egui::{self, Sense},
-    epaint::{vec2, Color32, Pos2, Stroke, Vec2},
+    epaint::{Color32, Pos2, Stroke, Vec2, vec2},
 };
 use moc3_impressionism::{Pendulum, PhysicsVertex, UpdateData};
 
@@ -48,8 +48,8 @@ fn main() -> Result<(), eframe::Error> {
     let mut last = None;
     let mut translation = glam::Vec2::ZERO;
     let mut rotation = 0.0;
-    eframe::run_simple_native("My egui App", options, move |ctx, _frame| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    eframe::run_ui_native("My egui App", options, move |ctx, _frame| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             if ui.input(|i| i.key_pressed(egui::Key::A)) {
                 translation.x += 2.0;
             }
@@ -115,8 +115,7 @@ fn main() -> Result<(), eframe::Error> {
 
                 last_point = next;
             }
-
-            ctx.request_repaint();
         });
+        ctx.request_repaint();
     })
 }

@@ -9,9 +9,13 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-binrw = "0.15.0"
-bytemuck = "1.23.2"
-glam = "0.30.5"
+binrw = "0.15.1"
+bytemuck = "1.25.0"
+glam = "0.33.0"
 image = "0.25.6"
-wgpu = "26.0.1"
-winit = "0.30.12"
+wgpu = "29.0.3"
+windows = "=0.62.2"
+winit = "0.30.13"
+
+[profile.dev.package.image]
+opt-level = 3

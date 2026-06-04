@@ -2,7 +2,7 @@ use binrw::BinReaderExt;
 use image::RgbaImage;
 use moc3_rs::{
     data::Moc3Data,
-    puppet::{framedata_for_puppet, puppet_from_moc3, Puppet, PuppetFrameData},
+    puppet::{Puppet, PuppetFrameData, framedata_for_puppet, puppet_from_moc3},
 };
 use moc3_wgpu::renderer::new_renderer;
 use rand::Rng;
@@ -21,7 +21,6 @@ fn main() {
     let f = File::open("a.moc3").unwrap();
     let mut reader = BufReader::new(f);
     let read: Moc3Data = reader.read_le().unwrap();
-
     let puppet = puppet_from_moc3(&read);
     drop(read);
 
@@ -49,9 +48,9 @@ fn main() {
 }
 
 struct App {
-    window: Option<Arc<Window>>,
     gfx_state: Option<GfxState>,
     app: AppState,
+    window: Option<Arc<Window>>,
 }
 
 impl App {
@@ -65,16 +64,24 @@ impl App {
 }
 
 impl ApplicationHandler for App {
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.gfx_state = None;
+        self.window = None;
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = event_loop
-            .create_window(
-                Window::default_attributes()
-                    .with_inner_size(PhysicalSize::new(1000, 1000))
-                    .with_resizable(false)
-                    .with_transparent(true)
-                    .with_visible(true),
-            )
-            .unwrap();
+        if self.window.is_some() {
+            return;
+        }
+        let Ok(window) = event_loop.create_window(
+            Window::default_attributes()
+                .with_inner_size(PhysicalSize::new(1000, 1000))
+                .with_resizable(false)
+                .with_transparent(true)
+                .with_visible(true),
+        ) else {
+            return;
+        };
         let window = Arc::new(window);
         self.gfx_state = Some(pollster::block_on(GfxState::new(
             window.clone(),
@@ -85,6 +92,18 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         match event {
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key: winit::keyboard::PhysicalKey::Code(key_code),
+                        ..
+                    },
+                ..
+            } => {
+                if matches!(key_code, winit::keyboard::KeyCode::Escape) {
+                    event_loop.exit();
+                }
+            }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
@@ -101,16 +120,18 @@ impl ApplicationHandler for App {
 }
 
 struct GfxState {
+    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    surface: wgpu::Surface<'static>,
     renderer: moc3_wgpu::renderer::Renderer,
 }
 
 impl GfxState {
     async fn new(window: Arc<Window>, state: &mut AppState) -> Self {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            ..wgpu::InstanceDescriptor::new_without_display_handle_from_env()
+        });
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -156,13 +177,27 @@ impl GfxState {
     }
 
     fn paint(&mut self, state: &mut AppState) {
-        let output = self.surface.get_current_texture().unwrap();
-        let view = (output.texture).create_view(&wgpu::TextureViewDescriptor::default());
+        let output = self.surface.get_current_texture();
+        let surface_texture = match output {
+            wgpu::CurrentSurfaceTexture::Success(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                self.surface.configure(&self.device, &self.surface_config);
+                texture
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.surface_config);
+                return;
+            }
+            _ => return,
+        };
+        let view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.renderer.prepare(
             &self.device,
             &self.queue,
-            output.texture.size(),
+            surface_texture.texture.size(),
             &state.frame_data,
         );
         let mut encoder = self
@@ -171,7 +206,7 @@ impl GfxState {
         self.renderer.render(&view, &mut encoder);
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        output.present();
+        surface_texture.present();
     }
 }
 

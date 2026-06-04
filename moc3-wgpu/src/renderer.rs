@@ -129,6 +129,7 @@ impl Renderer {
             label: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         let mut cur_stencil_test_ref: u8 = 0;
@@ -217,7 +218,7 @@ pub fn new_renderer(
     let texture_sampler = device.create_sampler(&SamplerDescriptor {
         min_filter: FilterMode::Linear,
         mag_filter: FilterMode::Linear,
-        mipmap_filter: FilterMode::Linear,
+        mipmap_filter: MipmapFilterMode::Linear,
         ..SamplerDescriptor::default()
     });
 
@@ -311,7 +312,7 @@ pub fn new_renderer(
     });
 
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        bind_group_layouts: &[&uniform_layout, &texture_layout],
+        bind_group_layouts: &[Some(&uniform_layout), Some(&texture_layout)],
         ..PipelineLayoutDescriptor::default()
     });
 
@@ -590,13 +591,13 @@ fn pipeline_for(
         },
         depth_stencil: Some(DepthStencilState {
             format: TextureFormat::Depth24PlusStencil8,
-            depth_write_enabled: false,
-            depth_compare: CompareFunction::Always,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(CompareFunction::Always),
             stencil,
             bias: DepthBiasState::default(),
         }),
         multisample: MultisampleState::default(),
-        multiview: None,
         cache: None,
+        multiview_mask: None,
     })
 }

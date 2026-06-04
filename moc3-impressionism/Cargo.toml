@@ -1,9 +1,9 @@
 [package]
 name = "moc3-impressionism"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 glam = { workspace = true, features = ["bytemuck", "serde"] }
 moc3-rs = { path = "../moc3-rs" }
-serde = { version = "1.0.219", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }

@@ -211,6 +211,7 @@ impl Puppet {
 
                 // A well-formed file will not have a parent and child referring to the same data,
                 // but this is here to deal with malformed files.
+                // TODO: Don't do this on every update.
                 assert_ne!(
                     (discriminant(&child.data), child.broad_index),
                     (discriminant(&parent.data), parent.broad_index),
@@ -219,40 +220,58 @@ impl Puppet {
                 let (child_changes, child_opacity, child_color) = match &child.data {
                     // Safety: We ensure above that we will not have overlapping references.
                     node::NodeKind::ArtMesh(_) => unsafe {
-                        let vec_data = &mut *art_mesh_ptr.add(child.broad_index as usize);
+                        let broad_index = child.broad_index as usize;
+                        debug_assert!(broad_index < frame_data.art_mesh_data.len());
+                        debug_assert!(broad_index < frame_data.art_mesh_opacities.len());
+                        debug_assert!(broad_index < frame_data.art_mesh_colors.len());
+
+                        let vec_data = &mut *art_mesh_ptr.add(broad_index);
                         (
                             vec_data.as_mut_slice(),
-                            &mut *art_mesh_opacity_ptr.add(child.broad_index as usize),
-                            &mut *art_mesh_color_ptr.add(child.broad_index as usize),
+                            &mut *art_mesh_opacity_ptr.add(broad_index),
+                            &mut *art_mesh_color_ptr.add(broad_index),
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
                     node::NodeKind::WarpDeformer(_, ind) => unsafe {
-                        let vec_data = &mut *warp_deformer_ptr.add(*ind as usize);
+                        let ind = *ind as usize;
+                        debug_assert!(ind < frame_data.warp_deformer_data.len());
+                        debug_assert!(ind < frame_data.warp_deformer_opacities.len());
+                        debug_assert!(ind < frame_data.warp_deformer_colors.len());
+
+                        let vec_data = &mut *warp_deformer_ptr.add(ind);
                         (
                             vec_data.as_mut_slice(),
-                            &mut *warp_deformer_opacity_ptr.add(*ind as usize),
-                            &mut *warp_deformer_color_ptr.add(*ind as usize),
+                            &mut *warp_deformer_opacity_ptr.add(ind),
+                            &mut *warp_deformer_color_ptr.add(ind),
                         )
                     },
                     // Safety: We ensure above that we will not have overlapping references.
                     node::NodeKind::RotationDeformer(_, ind) => unsafe {
-                        let slice_data = slice::from_mut(
-                            &mut (*rotation_deformer_ptr.add(*ind as usize)).origin,
-                        );
+                        let ind = *ind as usize;
+                        debug_assert!(ind < frame_data.rotation_deformer_data.len());
+                        debug_assert!(ind < frame_data.rotation_deformer_opacities.len());
+                        debug_assert!(ind < frame_data.rotation_deformer_colors.len());
+
+                        let slice_data =
+                            slice::from_mut(&mut (*rotation_deformer_ptr.add(ind)).origin);
 
                         (
                             slice_data,
-                            &mut *rotation_deformer_opacity_ptr.add(*ind as usize),
-                            &mut *rotation_deformer_color_ptr.add(child.broad_index as usize),
+                            &mut *rotation_deformer_opacity_ptr.add(ind),
+                            &mut *rotation_deformer_color_ptr.add(ind),
                         )
                     },
                 };
 
                 let child_angle = if let node::NodeKind::RotationDeformer(_, ind) = &child.data {
-                    let child_angle =
-                        unsafe { &mut (*rotation_deformer_ptr.add(*ind as usize)).angle };
-                    let scale = unsafe { &(*rotation_deformer_ptr.add(*ind as usize)).scale };
+                    let ind = *ind as usize;
+                    debug_assert!(ind < frame_data.rotation_deformer_data.len());
+
+                    // SAFETY: We check that ind is in-bounds in the parsing step.
+                    let child_deformer_ptr = unsafe { rotation_deformer_ptr.add(ind) };
+                    let child_angle = unsafe { &mut (*child_deformer_ptr).angle };
+                    let scale = unsafe { &(*child_deformer_ptr).scale };
                     frame_data.deformer_scale_data[child.broad_index as usize] = *scale;
                     Some(child_angle)
                 } else {
