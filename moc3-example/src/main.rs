@@ -76,7 +76,7 @@ impl ApplicationHandler for App {
         let Ok(window) = event_loop.create_window(
             Window::default_attributes()
                 .with_inner_size(PhysicalSize::new(1000, 1000))
-                .with_resizable(false)
+                .with_resizable(true)
                 .with_transparent(true)
                 .with_visible(true),
         ) else {
@@ -112,6 +112,11 @@ impl ApplicationHandler for App {
                 if let Some(gfx_state) = &mut self.gfx_state {
                     gfx_state.paint(&mut self.app);
                     self.window.as_ref().unwrap().request_redraw();
+                }
+            }
+            WindowEvent::Resized(new_size) => {
+                if let Some(gfx_state) = &mut self.gfx_state {
+                    gfx_state.resize_surface(new_size.width, new_size.height);
                 }
             }
             _ => {}
@@ -174,6 +179,12 @@ impl GfxState {
             surface,
             renderer,
         }
+    }
+
+    fn resize_surface(&mut self, width: u32, height: u32) {
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface.configure(&self.device, &self.surface_config);
     }
 
     fn paint(&mut self, state: &mut AppState) {

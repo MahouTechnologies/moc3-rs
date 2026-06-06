@@ -35,7 +35,7 @@ pub struct Renderer {
     uniform_bind_group: BindGroup,
     uniform_alignment_needed: u64,
 
-    camera_buffer: Buffer,
+    mvp_buffer: Buffer,
     uniform_buffer: Buffer,
 
     uv_buffers: Vec<Buffer>,
@@ -78,11 +78,25 @@ impl Renderer {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
         }
 
-        queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(&[Mat4::IDENTITY]),
+        // Not quite sure how this works. I think model would move the
+        // model around and view might always be identity?
+        let model = Mat4::IDENTITY;
+        let view = Mat4::IDENTITY;
+
+        // Also rooms by 1.5 and corrects for aspect ratio
+        let aspect = render_size.width as f32 / render_size.height as f32;
+        let (half_w, half_h) = if aspect >= 1.0 {
+            (aspect / 1.5, 1.0 / 1.5)
+        } else {
+            (1.0 / 1.5, 1.0 / (1.5 * aspect))
+        };
+        let projection = Mat4::orthographic_rh(
+            -half_w, half_w, half_h, -half_h, // Live2D Y-down to NDC Y-up
+            -1.0, 1.0,
         );
+
+        let mvp = projection * view * model;
+        queue.write_buffer(&self.mvp_buffer, 0, bytemuck::bytes_of(&mvp));
 
         for i in 0..self.texture_nums.len() {
             let uniform = Uniform {
@@ -390,7 +404,7 @@ pub fn new_renderer(
         ),
     ];
 
-    let camera_buffer = device.create_buffer(&BufferDescriptor {
+    let mvp_buffer = device.create_buffer(&BufferDescriptor {
         size: std::mem::size_of::<Mat4>() as u64,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
@@ -412,7 +426,7 @@ pub fn new_renderer(
         entries: &[
             BindGroupEntry {
                 binding: 0,
-                resource: camera_buffer.as_entire_binding(),
+                resource: mvp_buffer.as_entire_binding(),
             },
             BindGroupEntry {
                 binding: 1,
@@ -470,7 +484,7 @@ pub fn new_renderer(
         uniform_bind_group,
         uniform_alignment_needed,
 
-        camera_buffer,
+        mvp_buffer,
         uniform_buffer,
 
         uv_buffers,
