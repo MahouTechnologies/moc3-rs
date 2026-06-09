@@ -154,7 +154,7 @@ impl GfxState {
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             width: window.inner_size().width,
             height: window.inner_size().height,
             present_mode: wgpu::PresentMode::AutoVsync,
@@ -168,7 +168,7 @@ impl GfxState {
             &state.puppet,
             &device,
             &queue,
-            TextureFormat::Bgra8Unorm,
+            TextureFormat::Rgba8UnormSrgb,
             &state.textures,
         );
 
