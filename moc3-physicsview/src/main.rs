@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use eframe::{
     egui::{self, Sense},
-    epaint::{Color32, Pos2, Stroke, Vec2, vec2},
+    epaint::{Color32, Pos2, Stroke, Vec2},
 };
 use moc3_impressionism::{Pendulum, PhysicsVertex, UpdateData};
 
@@ -73,22 +73,22 @@ fn main() -> Result<(), eframe::Error> {
                 last = Some(Instant::now());
             }
             let now = Instant::now();
-            physics.update_points(
+            physics.step(
                 (now - last.unwrap()).as_secs_f32(),
                 UpdateData {
                     translation,
                     rotation,
                 },
+                Default::default(),
+                0.001,
             );
             last = Some(now);
 
             let origin = Pos2::new(400.0, 400.0);
             let (_response, painter) = ui.allocate_painter(Vec2::splat(800.0), Sense::hover());
 
-            let mut last_point = vec2(
-                physics.points[0].cur_position.x,
-                physics.points[0].cur_position.y,
-            );
+            let points = physics.points();
+            let mut last_point = Vec2::from(points[0].position().to_array());
             let scale_factor = 20.0;
             painter.circle(
                 origin + last_point * scale_factor,
@@ -96,8 +96,8 @@ fn main() -> Result<(), eframe::Error> {
                 Color32::TRANSPARENT,
                 Stroke::new(2.0, Color32::RED),
             );
-            for point in physics.points.iter_mut().skip(1) {
-                let next = vec2(point.cur_position.x, point.cur_position.y);
+            for point in points.iter().map(|x| x.position()).skip(1) {
+                let next = Vec2::from(point.to_array());
 
                 painter.line_segment(
                     [

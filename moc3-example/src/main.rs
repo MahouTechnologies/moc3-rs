@@ -1,12 +1,13 @@
 use binrw::BinReaderExt;
 use image::RgbaImage;
+use moc3_impressionism::{PhysicsSystem, data::Physics3Data};
 use moc3_rs::{
     data::Moc3Data,
     puppet::{Puppet, PuppetFrameData, framedata_for_puppet, puppet_from_moc3},
 };
 use moc3_wgpu::renderer::new_renderer;
 use rand::Rng;
-use std::{fs::File, time::Instant};
+use std::{fs, time::Instant};
 use std::{io::BufReader, sync::Arc};
 use wgpu::{CompositeAlphaMode, TextureFormat};
 use winit::{
@@ -18,13 +19,28 @@ use winit::{
 };
 
 fn main() {
-    let f = File::open("a.moc3").unwrap();
+    let f = fs::File::open("a.moc3").unwrap();
     let mut reader = BufReader::new(f);
     let read: Moc3Data = reader.read_le().unwrap();
     let puppet = puppet_from_moc3(&read);
     drop(read);
 
     let frame_data = framedata_for_puppet(&puppet);
+
+    let physics_json = fs::read_to_string("a.physics.json").unwrap();
+    let physics_data: Physics3Data = serde_json::from_str(&physics_json).unwrap();
+    let mut physics = PhysicsSystem::from_data(&physics_data, puppet.param_data());
+
+    // Don't manually animate anything driven by physics.
+    let param_count = puppet.param_data().count as usize;
+    let mut physics_driven = vec![false; param_count];
+    for idx in physics.output_param_indices() {
+        physics_driven[idx] = true;
+    }
+
+    // Start from defaults and settle physics to a stable initial state.
+    let mut params = puppet.param_data().defaults.clone();
+    physics.fixpoint(&mut params);
 
     let get_img = |a: &str| {
         image::ImageReader::open(a)
@@ -44,7 +60,14 @@ fn main() {
         get_img("./a.4096/texture_06.png"),
         get_img("./a.4096/texture_07.png"),
     ];
-    run(puppet, frame_data, textures);
+    run(
+        puppet,
+        frame_data,
+        textures,
+        physics,
+        physics_driven,
+        params,
+    );
 }
 
 struct App {
@@ -90,7 +113,7 @@ impl ApplicationHandler for App {
         self.window = Some(window);
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -224,35 +247,61 @@ impl GfxState {
 struct AppState {
     puppet: Puppet,
     frame_data: PuppetFrameData,
-    start: Option<Instant>,
+    /// Absolute start time, used as the base for the animation sine wave.
+    start: Instant,
+    /// Time of the previous frame, used to compute `delta_seconds` for physics.
+    last_update: Option<Instant>,
     params: Vec<f32>,
     opacities: Vec<f32>,
+    /// Random phase offsets for the per-parameter sine animation.
     sts: Vec<f32>,
     textures: Vec<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
+    physics: PhysicsSystem,
+    /// `true` for each parameter index iff it is a physics output destination.
+    physics_driven: Vec<bool>,
 }
 
 impl AppState {
     pub fn update(&mut self) {
-        let start = self.start.get_or_insert_with(|| Instant::now());
-        let out = Instant::now();
-        let t = (out - *start).as_secs_f32();
-        for i in 0..self.params.len() {
-            self.params[i] = (self.sts[i] + t).sin() * 0.5 + 0.5;
+        let now = Instant::now();
+        let t = (now - self.start).as_secs_f32();
+        let delta = self
+            .last_update
+            .map(|last| (now - last).as_secs_f32())
+            .unwrap_or(0.0);
+        self.last_update = Some(now);
+
+        // Animate non-physics parameters with a per-parameter sine wave.
+        for (i, param) in self.params.iter_mut().enumerate() {
+            if !self.physics_driven[i] {
+                let min = self.puppet.param_data().mins[i];
+                let max = self.puppet.param_data().maxes[i];
+                *param = (min + max) / 2.0 + (self.sts[i] + t * 0.5).sin() * (max - min) / 2.0;
+            }
         }
+
+        // Run the physics simulation and write outputs into `params`.
+        self.physics.step(&mut self.params, delta);
 
         self.puppet
             .update(&self.params, &self.opacities, &mut self.frame_data);
     }
 }
 
-pub fn run(puppet: Puppet, frame_data: PuppetFrameData, textures: Vec<RgbaImage>) {
-    let params = puppet.param_data().defaults.clone();
+pub fn run(
+    puppet: Puppet,
+    frame_data: PuppetFrameData,
+    textures: Vec<RgbaImage>,
+    physics: PhysicsSystem,
+    physics_driven: Vec<bool>,
+    params: Vec<f32>,
+) {
     let opacities = vec![1.0; puppet.part_count as usize];
     let mut sts = params.clone();
     let mut rng = rand::rng();
 
-    for i in sts.iter_mut() {
-        *i = rng.random();
+    for st in sts.iter_mut() {
+        *st = rng.random();
     }
 
     let state = AppState {
@@ -261,8 +310,11 @@ pub fn run(puppet: Puppet, frame_data: PuppetFrameData, textures: Vec<RgbaImage>
         params,
         opacities,
         sts,
-        start: None,
+        start: Instant::now(),
+        last_update: None,
         textures,
+        physics,
+        physics_driven,
     };
 
     let mut app = App::new(state);

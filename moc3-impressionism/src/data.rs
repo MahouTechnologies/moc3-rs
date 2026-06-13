@@ -22,13 +22,21 @@ pub struct PhysicsSetting {
     pub normalization: Option<PhysicsNormalization>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum PhysicsType {
+    X,
+    Y,
+    Angle,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PhysicsInput {
     pub source: PhysicsTarget,
     pub weight: f32,
     #[serde(rename = "Type")]
-    pub ty: String,
+    pub ty: PhysicsType,
     pub reflect: bool,
 }
 
@@ -40,7 +48,7 @@ pub struct PhysicsOutput {
     pub scale: f32,
     pub weight: f32,
     #[serde(rename = "Type")]
-    pub ty: String,
+    pub ty: PhysicsType,
     pub reflect: bool,
 }
 
@@ -60,6 +68,23 @@ pub struct PhysicsVertex {
 pub struct PhysicsNormalization {
     pub position: ParamterData,
     pub angle: ParamterData,
+}
+
+impl Default for PhysicsNormalization {
+    fn default() -> Self {
+        Self {
+            position: ParamterData {
+                minimum: -10.0,
+                maximum: 10.0,
+                default: 0.0,
+            },
+            angle: ParamterData {
+                minimum: -57.3,
+                maximum: 57.3,
+                default: 0.0,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -84,6 +109,7 @@ pub struct Physics3Meta {
     pub total_output_count: usize,
     pub vertex_count: usize,
     pub physics_setting_count: usize,
+    pub fps: u32,
     pub effective_forces: ForceData,
     pub physics_dictionary: Vec<PhysicsIdData>,
 }
