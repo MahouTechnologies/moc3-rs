@@ -1,8 +1,8 @@
 use glam::Vec2;
+use moc3_data::physics::{Physics3Data, PhysicsType};
 use moc3_rs::puppet::ParamData;
 
 use crate::UpdateData;
-use crate::data::{Physics3Data, PhysicsType};
 use crate::pendulum::{Pendulum, PendulumPoint};
 
 const MAX_WEIGHT: f32 = 100.0;

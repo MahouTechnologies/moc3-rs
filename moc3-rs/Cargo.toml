@@ -1,7 +1,7 @@
 [package]
 name = "moc3-rs"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 binrw = { workspace = true }
@@ -10,4 +10,3 @@ glam = { workspace = true, features = ["bytemuck"] }
 indextree = "4.7.4"
 modular-bitfield = "0.11.2"
 thiserror = "2.0.16"
-

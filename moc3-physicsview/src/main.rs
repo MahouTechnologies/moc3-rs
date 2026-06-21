@@ -4,7 +4,8 @@ use eframe::{
     egui::{self, Sense},
     epaint::{Color32, Pos2, Stroke, Vec2},
 };
-use moc3_impressionism::{Pendulum, PhysicsVertex, UpdateData};
+use moc3_data::physics::PhysicsVertex;
+use moc3_impressionism::{Pendulum, UpdateData};
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {

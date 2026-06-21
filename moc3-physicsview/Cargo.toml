@@ -1,13 +1,12 @@
 [package]
 name = "moc3-physicsview"
-version = "0.1.0"
-edition = "2024"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 eframe = "0.34.3"
 glam = { workspace = true }
+moc3-data = { path = "../moc3-data" }
 moc3-rs = { path = "../moc3-rs" }
 moc3-impressionism = { path = "../moc3-impressionism" }
 wgpu = { workspace = true }

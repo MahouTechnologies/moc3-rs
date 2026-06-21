@@ -1,6 +1,7 @@
 use binrw::BinReaderExt;
 use image::RgbaImage;
-use moc3_impressionism::{PhysicsSystem, data::Physics3Data};
+use moc3_data::physics::Physics3Data;
+use moc3_impressionism::PhysicsSystem;
 use moc3_rs::{
     data::Moc3Data,
     puppet::{Puppet, PuppetFrameData, framedata_for_puppet, puppet_from_moc3},

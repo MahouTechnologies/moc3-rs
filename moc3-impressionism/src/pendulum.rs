@@ -1,5 +1,7 @@
 use glam::Vec2;
 
+use moc3_data::physics::PhysicsVertex;
+
 #[derive(Clone, Debug)]
 pub struct PendulumPoint {
     /// The position on the current timestep.
@@ -87,7 +89,7 @@ impl Pendulum {
     const SECONDS_PER_REAL_SECOND: f32 = 25.0;
 
     /// Construct a pendulum from vertex descriptors.
-    pub fn new(vertices: impl IntoIterator<Item = crate::data::PhysicsVertex>) -> Self {
+    pub fn new(vertices: impl IntoIterator<Item = PhysicsVertex>) -> Self {
         let points: Vec<PendulumPoint> = vertices
             .into_iter()
             .map(|v| PendulumPoint {

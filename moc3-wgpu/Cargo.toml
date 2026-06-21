@@ -1,7 +1,7 @@
 [package]
 name = "moc3-wgpu"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true, features = ["extern_crate_alloc", "derive"] }

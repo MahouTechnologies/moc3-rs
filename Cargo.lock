@@ -2128,12 +2128,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "moc3-data"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "moc3-rs",
+ "serde",
+]
+
+[[package]]
 name = "moc3-example"
 version = "0.1.0"
 dependencies = [
  "binrw",
  "glam",
  "image",
+ "moc3-data",
  "moc3-impressionism",
  "moc3-rs",
  "moc3-wgpu",
@@ -2149,6 +2159,7 @@ name = "moc3-impressionism"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "moc3-data",
  "moc3-rs",
  "serde",
 ]
@@ -2159,6 +2170,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "glam",
+ "moc3-data",
  "moc3-impressionism",
  "moc3-rs",
  "wgpu",
