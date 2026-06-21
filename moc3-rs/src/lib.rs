@@ -1,13 +1,12 @@
-use std::io::Cursor;
-
-use binrw::BinReaderExt;
-use data::Moc3Data;
-use puppet::{puppet_from_moc3, Puppet};
+use data::Moc3;
+use puppet::{Puppet, puppet_from_moc3};
 use thiserror::Error;
 
 pub mod data;
+
 mod deformer;
 mod math;
+pub mod owned;
 pub mod puppet;
 
 #[derive(Error, Debug)]
@@ -15,7 +14,6 @@ pub mod puppet;
 pub struct ParseError;
 
 pub fn parse_puppet(bytes: &[u8]) -> Result<Puppet, ParseError> {
-    let mut cursor = Cursor::new(bytes);
-    let read: Moc3Data = cursor.read_le().map_err(|_| ParseError)?;
-    Ok(puppet_from_moc3(&read))
+    let read = Moc3::new(bytes).map_err(|_| ParseError)?;
+    Ok(puppet_from_moc3(read))
 }

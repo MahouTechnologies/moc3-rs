@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-binrw = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true }
 moc3-data = { path = "../moc3-data" }

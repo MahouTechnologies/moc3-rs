@@ -1,174 +1,22 @@
-use binrw::{args, helpers::count_with, BinRead, FilePtr32, NullString};
+//! Zero-copy reader for the MOC3 binary format.
+//!
+//! # Alignment
+//!
+//! This module assumes the provided input bytes are 4-byte aligned
+//! in order to allow this to zero-copy into arrays of native types.
+//!
+//! # Endianness
+//!
+//! Only little-endian MOC3 files are supported as a big-endian MOC3 file has
+//! not been seen in the wild.
+
+use std::mem::{align_of, size_of};
+
+use bytemuck::{Pod, Zeroable, cast_slice};
 use glam::Vec2;
-use modular_bitfield::{bitfield, BitfieldSpecifier};
-
-#[binrw::parser(reader, endian)]
-fn vec2_parser() -> binrw::BinResult<Vec2> {
-    <[f32; 2] as BinRead>::read_options(reader, endian, ()).map(|x| x.into())
-}
-
-#[derive(BinRead, Debug)]
-#[br(magic = b"MOC3")]
-pub struct Header {
-    pub version: Version,
-    pub big_endian: u8,
-}
-
-#[derive(BinRead, Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
-#[br(repr = u8)]
-pub enum Version {
-    V3_00 = 1,
-    V3_03 = 2,
-    V4_00 = 3,
-    V4_02 = 4,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    version: Version
-})]
-pub struct CountInfoTable {
-    pub parts: u32,
-    pub deformers: u32,
-    pub warp_deformers: u32,
-    pub rotation_deformers: u32,
-    pub art_meshes: u32,
-    pub parameters: u32,
-    pub part_keyforms: u32,
-    pub warp_deformer_keyforms: u32,
-    pub rotation_deformer_keyforms: u32,
-    pub art_mesh_keyforms: u32,
-    pub keyform_positions: u32,
-    pub parameter_binding_indices: u32,
-    pub keyform_bindings: u32,
-    pub parameter_bindings: u32,
-    pub keys: u32,
-    pub uvs: u32,
-    pub vertex_indices: u32,
-    pub art_mesh_masks: u32,
-    pub draw_order_groups: u32,
-    pub draw_order_group_objects: u32,
-    pub glues: u32,
-    pub glue_infos: u32,
-    pub glue_keyforms: u32,
-
-    #[br(if(version >= Version::V4_02))]
-    pub keyform_multiply_colors: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub keyform_screen_colors: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_parameter_bindings: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_keyform_bindings: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_warp_deformers: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_art_meshes: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_constraint_indices: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_constraints: u32,
-    #[br(if(version >= Version::V4_02))]
-    pub blend_shape_constraint_values: u32,
-}
-
-#[derive(BinRead, Debug)]
-pub struct CanvasInfo {
-    pub pixels_per_unit: f32,
-    pub x_origin: f32,
-    pub y_origin: f32,
-    pub canvas_width: f32,
-    pub canvas_height: f32,
-    pub canvas_flags: u8, // TODO
-}
-
-#[derive(BinRead, Debug)]
-pub struct Id {
-    #[br(pad_size_to = 64)]
-    pub name: NullString,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct PartOffsets {
-    // FilePtr to count * 8 bytes of 0s
-    pub data: u32,
-    #[br(args { inner: args! { count } })]
-    pub ids: FilePtr32<Vec<Id>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_visible: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_enabled: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parent_part_indices: FilePtr32<Vec<i32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct DeformerOffsets {
-    // FilePtr to count * 8 bytes of 0s
-    pub data: u32,
-    #[br(args { inner: args! { count } })]
-    pub ids: FilePtr32<Vec<Id>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_visible: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_enabled: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parent_part_indices: FilePtr32<Vec<i32>>,
-    #[br(args { inner: args! { count } })]
-    pub parent_deformer_indices: FilePtr32<Vec<i32>>,
-    #[br(args { inner: args! { count } })]
-    pub types: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub specific_sources_indices: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct WarpDeformerOffsets {
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub vertex_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub rows: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub columns: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct RotationDeformerOffsets {
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub base_angles: FilePtr32<Vec<f32>>,
-}
+use modular_bitfield::{BitfieldSpecifier, bitfield};
+use thiserror::Error;
+use yoke::Yokeable;
 
 #[derive(BitfieldSpecifier, Debug, Clone, Copy, PartialEq, Eq)]
 #[bits = 2]
@@ -178,566 +26,1383 @@ pub enum BlendMode {
     Multiplicative = 1 << 1,
 }
 
-#[bitfield(filled = false)]
-#[derive(BinRead, Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[br(try_map = Self::from_bytes)]
-pub struct ArtMeshFlags {
-    pub blend_mode: BlendMode,
-    pub double_sided: bool,
-    pub inverted: bool,
+#[allow(unused_parens)]
+mod inner {
+    use super::*;
+    #[bitfield(filled = false)]
+    #[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+    pub struct ArtMeshFlags {
+        pub blend_mode: BlendMode,
+        pub double_sided: bool,
+        pub inverted: bool,
+    }
 }
+pub use inner::ArtMeshFlags;
 
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ArtMeshOffsets {
-    pub runtime_ignored: [u32; 4],
-    #[br(args { inner: args! { count } })]
-    pub ids: FilePtr32<Vec<Id>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_visible: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_enabled: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parent_part_indices: FilePtr32<Vec<i32>>,
-    #[br(args { inner: args! { count } })]
-    pub parent_deformer_indices: FilePtr32<Vec<i32>>,
-    #[br(args { inner: args! { count } })]
-    pub texture_nums: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_flags: FilePtr32<Vec<ArtMeshFlags>>,
-    #[br(args { inner: args! { count } })]
-    pub vertex_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub uv_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub vertex_index_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub vertex_index_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_mask_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_mask_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ParameterOffsets {
-    pub unused: u32,
-    #[br(args { inner: args! { count } })]
-    pub ids: FilePtr32<Vec<Id>>,
-    #[br(args { inner: args! { count } })]
-    pub max_values: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub min_values: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub default_values: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_repeat: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub decimal_places: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parameter_binding_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parameter_binding_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
-#[br(repr = u32)]
-#[non_exhaustive]
-pub enum ParameterType {
-    Normal = 0,
-    BlendShape = 1,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ParameterOffsetsV4_02 {
-    #[br(args { inner: args! { count } })]
-    pub parameter_types: FilePtr32<Vec<ParameterType>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_parameter_binding_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_parameter_binding_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeParameterBindingOffsets {
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub base_key_indices: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeKeyformBindingOffsets {
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_parameter_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_blend_shape_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_blend_shape_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_constraint_index_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_constraint_index_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeOffsets {
-    #[br(args { inner: args! { count } })]
-    pub target_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_keyform_binding_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_keyform_binding_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeConstraintIndicesOffsets {
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_constraint_sources_indices: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeConstraintOffsets {
-    #[br(args { inner: args! { count } })]
-    pub parameter_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_constraint_value_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub blend_shape_constraint_value_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct BlendShapeConstraintValueOffsets {
-    #[br(args { inner: args! { count } })]
-    pub keys: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub weights: FilePtr32<Vec<f32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct PartKeyformOffsets {
-    #[br(args { inner: args! { count } })]
-    pub draw_orders: FilePtr32<Vec<f32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct WarpDeformerKeyformOffsets {
-    #[br(args { inner: args! { count } })]
-    pub opacities: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_position_sources_starts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct WarpDeformerKeyformOffsetsV303 {
-    #[br(args { inner: args! { count } })]
-    pub is_new_deformerrs: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct WarpDeformerKeyformOffsetsV402 {
-    #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct RotationDeformerKeyformOffsets {
-    #[br(args { inner: args! { count } })]
-    pub opacities: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub angles: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub x_origin: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub y_origin: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub scales: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_reflect_x: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub is_reflect_y: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct RotationDeformerKeyformOffsetsV402 {
-    #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ArtMeshKeyformOffsets {
-    #[br(args { inner: args! { count } })]
-    pub opacities: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub draw_orders: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_position_sources_starts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ArtMeshKeyformOffsetsV402 {
-    #[br(args { inner: args! { count } })]
-    pub keyform_color_sources_start: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct KeyformPositionOffsets {
-    #[br(parse_with = FilePtr32::with(count_with(count / 2, vec2_parser)))]
-    pub coords: FilePtr32<Vec<Vec2>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ParameterBindingIndicesOffsets {
-    #[br(args { inner: args! { count } })]
-    pub binding_sources_indices: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct KeyformBindingOffsets {
-    #[br(args { inner: args! { count } })]
-    pub parameter_binding_index_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub parameter_binding_index_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ParameterBindingOffsets {
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct KeyOffsets {
-    #[br(args { inner: args! { count } })]
-    pub values: FilePtr32<Vec<f32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct UvOffsets {
-    #[br(parse_with = FilePtr32::with(count_with(count / 2, vec2_parser)))]
-    pub uvs: FilePtr32<Vec<Vec2>>, // TODO: Vec2
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct VertexIndicesOffsets {
-    #[br(args { inner: args! { count } })]
-    pub indices: FilePtr32<Vec<u16>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ArtMeshMaskOffsets {
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_source_indices: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct DrawOrderGroupOffsets {
-    #[br(args { inner: args! { count } })]
-    pub object_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub object_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub object_sources_total_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub maximum_draw_orders: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub minimum_draw_orders: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
-#[br(repr = u32)]
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DrawOrderGroupObjectType {
     ArtMesh = 0,
     Part = 1,
 }
 
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct DrawOrderGroupObjectOffsets {
-    #[br(args { inner: args! { count } })]
-    pub types: FilePtr32<Vec<DrawOrderGroupObjectType>>,
-    #[br(args { inner: args! { count } })]
-    pub indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub self_indices: FilePtr32<Vec<i32>>,
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub enum ParameterType {
+    Normal = 0,
+    BlendShape = 1,
 }
 
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct GlueOffsets {
-    pub unused: u32,
-    #[br(args { inner: args! { count } })]
-    pub ids: FilePtr32<Vec<Id>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_binding_sources_indices: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keyform_sources_counts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_indices_a: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub art_mesh_indices_b: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub glue_info_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub glue_info_sources_counts: FilePtr32<Vec<u32>>,
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub enum Version {
+    V3_00 = 1,
+    V3_03 = 2,
+    V4_00 = 3,
+    V4_02 = 4,
 }
 
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct GlueInfoOffsets {
-    #[br(args { inner: args! { count } })]
-    pub weights: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub vertex_indices: FilePtr32<Vec<u16>>,
-}
+/// A fixed 64-byte name field, NUL-padded.
+#[repr(transparent)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct Id(pub [u8; 64]);
 
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct GlueKeyformOffsets {
-    #[br(args { inner: args! { count } })]
-    pub intensities: FilePtr32<Vec<f32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    version: Version
-})]
-pub struct SectionOffsetTable {
-    #[br(args {
-        inner: args! { version }
-    })]
-    pub count_info: FilePtr32<CountInfoTable>,
-    pub canvas_info: FilePtr32<CanvasInfo>,
-    #[br(count(count_info.parts))]
-    pub parts: PartOffsets,
-    #[br(count(count_info.deformers))]
-    pub deformers: DeformerOffsets,
-    #[br(count(count_info.warp_deformers))]
-    pub warp_deformers: WarpDeformerOffsets,
-    #[br(count(count_info.rotation_deformers))]
-    pub rotation_deformers: RotationDeformerOffsets,
-    #[br(count(count_info.art_meshes))]
-    pub art_meshes: ArtMeshOffsets,
-    #[br(count(count_info.parameters))]
-    pub parameters: ParameterOffsets,
-    #[br(count(count_info.part_keyforms))]
-    pub part_keyforms: PartKeyformOffsets,
-    #[br(count(count_info.warp_deformer_keyforms))]
-    pub warp_deformer_keyforms: WarpDeformerKeyformOffsets,
-    #[br(count(count_info.rotation_deformer_keyforms))]
-    pub rotation_deformer_keyforms: RotationDeformerKeyformOffsets,
-    #[br(count(count_info.art_mesh_keyforms))]
-    pub art_mesh_keyforms: ArtMeshKeyformOffsets,
-    #[br(count(count_info.keyform_positions))]
-    pub keyform_positions: KeyformPositionOffsets,
-    #[br(count(count_info.parameter_binding_indices))]
-    pub parameter_binding_indices: ParameterBindingIndicesOffsets,
-    #[br(count(count_info.keyform_bindings))]
-    pub keyform_bindings: KeyformBindingOffsets,
-    #[br(count(count_info.parameter_bindings))]
-    pub parameter_bindings: ParameterBindingOffsets,
-    #[br(count(count_info.keys))]
-    pub keys: KeyOffsets,
-    #[br(count(count_info.uvs))]
-    pub uvs: UvOffsets,
-    #[br(count(count_info.vertex_indices))]
-    pub vertex_indices: VertexIndicesOffsets,
-    #[br(count(count_info.art_mesh_masks))]
-    pub art_mesh_masks: ArtMeshMaskOffsets,
-    #[br(count(count_info.draw_order_groups))]
-    pub draw_order_groups: DrawOrderGroupOffsets,
-    #[br(count(count_info.draw_order_group_objects))]
-    pub draw_order_group_objects: DrawOrderGroupObjectOffsets,
-    #[br(count(count_info.glues))]
-    pub glues: GlueOffsets,
-    #[br(count(count_info.glue_infos))]
-    pub glue_infos: GlueInfoOffsets,
-    #[br(count(count_info.glue_keyforms))]
-    pub glue_keyforms: GlueKeyformOffsets,
-
-    #[br(if(version >= Version::V3_03), count(count_info.warp_deformers))]
-    pub warp_deformer_keyforms_v303: Option<WarpDeformerKeyformOffsetsV303>,
-
-    #[br(if(version >= Version::V4_02), count(count_info.parameters))]
-    pub parameter_extensions: Option<ParameterExtensionsOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.warp_deformers))]
-    pub warp_deformer_keyforms_v402: Option<WarpDeformerKeyformOffsetsV402>,
-    #[br(if(version >= Version::V4_02), count(count_info.rotation_deformers))]
-    pub rotation_deformer_keyforms_v402: Option<RotationDeformerKeyformOffsetsV402>,
-    #[br(if(version >= Version::V4_02), count(count_info.art_meshes))]
-    pub art_mesh_deformer_keyforms_v402: Option<ArtMeshKeyformOffsetsV402>,
-    #[br(if(version >= Version::V4_02), count(count_info.keyform_multiply_colors))]
-    pub keyform_multiply_colors: Option<KeyformColorOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.keyform_screen_colors))]
-    pub keyform_screen_colors: Option<KeyformColorOffsets>,
-
-    #[br(if(version >= Version::V4_02), count(count_info.parameters))]
-    pub parameters_v402: Option<ParameterOffsetsV4_02>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_parameter_bindings))]
-    pub blend_shape_parameter_bindings: Option<BlendShapeParameterBindingOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_keyform_bindings))]
-    pub blend_shape_keyform_bindings: Option<BlendShapeKeyformBindingOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_warp_deformers))]
-    pub blend_shape_warp_deformers: Option<BlendShapeOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_art_meshes))]
-    pub blend_shape_art_meshes: Option<BlendShapeOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraint_indices))]
-    pub blend_shape_constraint_indices: Option<BlendShapeConstraintIndicesOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraints))]
-    pub blend_shape_constraints: Option<BlendShapeConstraintOffsets>,
-    #[br(if(version >= Version::V4_02), count(count_info.blend_shape_constraint_values))]
-    pub blend_shape_constraint_values: Option<BlendShapeConstraintValueOffsets>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct KeyformColorOffsets {
-    #[br(args { inner: args! { count } })]
-    pub red: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub green: FilePtr32<Vec<f32>>,
-    #[br(args { inner: args! { count } })]
-    pub blue: FilePtr32<Vec<f32>>,
-}
-
-#[derive(BinRead, Debug)]
-#[br(import {
-    count: usize
-})]
-pub struct ParameterExtensionsOffsets {
-    // FilePtr to count * 8 bytes of 0s
-    pub data: u32,
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_starts: FilePtr32<Vec<u32>>,
-    #[br(args { inner: args! { count } })]
-    pub keys_sources_counts: FilePtr32<Vec<u32>>,
-}
-
-#[derive(BinRead, Debug)]
-pub struct Moc3Data {
-    #[br(pad_size_to = 64)]
-    pub header: Header,
-    #[br(args {
-        version: header.version
-    })]
-    pub table: SectionOffsetTable,
-}
-
-impl Moc3Data {
-    pub fn keys(&self) -> &[f32] {
-        &self.table.keys.values
+impl Id {
+    /// The raw name bytes, up to (not including) the first NUL.
+    #[inline]
+    pub fn name_bytes(&self) -> &[u8] {
+        let end = self.0.iter().position(|&b| b == 0).unwrap_or(self.0.len());
+        &self.0[..end]
     }
 
-    pub fn vertex_indices(&self) -> &[u16] {
-        &self.table.vertex_indices.indices
+    /// The name as a `&str`, borrowed from the original data.
+    ///
+    /// Returns `""` if the name is not valid UTF-8.
+    #[inline]
+    pub fn name(&self) -> &str {
+        core::str::from_utf8(self.name_bytes()).unwrap_or("")
+    }
+}
+
+impl core::fmt::Debug for Id {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(self.name(), f)
+    }
+}
+
+/// Error returned by [`Moc3::new`].
+#[derive(Error, Debug)]
+pub enum Moc3Error {
+    /// The data was too small to contain a header and section offset table.
+    #[error("data is too small to be a moc3 file")]
+    TooSmall,
+    /// The file did not start with the `MOC3` magic.
+    #[error("missing MOC3 magic")]
+    BadMagic,
+    /// The version byte was not a known version.
+    #[error("unknown moc3 version byte: {0}")]
+    UnknownVersion(u8),
+    /// The file is big-endian, which is not supported.
+    #[error("big-endian moc3 files are not supported")]
+    BigEndianUnsupported,
+    /// The input buffer is not aligned, so sections cannot be reinterpreted as
+    /// native slices. The buffer must be at least 4-byte aligned.
+    #[error("input buffer is not 4-byte aligned")]
+    BufferMisaligned,
+    /// A pointer or count implied an offset outside the data (including a
+    /// section running past the end of the file), or an arithmetic overflow.
+    #[error("an offset pointed outside the file")]
+    BadOffset,
+    /// A section's data is not aligned to its element size.
+    #[error("section data is not correctly aligned")]
+    SectionMisaligned,
+}
+
+/// The canvas metadata block.
+#[derive(Debug, Clone, Copy)]
+pub struct CanvasInfo {
+    pub pixels_per_unit: f32,
+    pub x_origin: f32,
+    pub y_origin: f32,
+    pub canvas_width: f32,
+    pub canvas_height: f32,
+    pub canvas_flags: u8,
+}
+
+/// Zero-copy reader over the count info table: the per-section element counts.
+#[derive(Clone, Copy)]
+pub struct CountInfo<'a> {
+    data: &'a [u8],
+    base: usize,
+    version: Version,
+}
+
+/// Number of count entries in the table: 23 base, plus 9 more from v4.02.
+const COUNT_FIELDS_BASE: usize = 23;
+const COUNT_FIELDS_V402: usize = 32;
+
+/// Generates a count accessor reading entry `$i` of the table.
+///
+/// With a leading `$min` version the entry exists only from that version onward,
+/// so it reads `0` on older files where the table does not contain it.
+macro_rules! count {
+    ($(#[$m:meta])* $name:ident, $i:expr) => {
+        $(#[$m])*
+        #[inline]
+        pub fn $name(&self) -> u32 {
+            self.at($i)
+        }
+    };
+    ($(#[$m:meta])* $min:path, $name:ident, $i:expr) => {
+        $(#[$m])*
+        #[inline]
+        pub fn $name(&self) -> u32 {
+            if self.version >= $min {
+                self.at($i)
+            } else {
+                0
+            }
+        }
+    };
+}
+
+impl<'a> CountInfo<'a> {
+    /// Build the reader, validating that the whole count table is in bounds.
+    fn new(data: &'a [u8], version: Version) -> Result<Self, Moc3Error> {
+        let base = read_u32(data, OFF_COUNT_INFO) as usize;
+        let fields = if version >= Version::V4_02 {
+            COUNT_FIELDS_V402
+        } else {
+            COUNT_FIELDS_BASE
+        };
+        let end = base.checked_add(fields * 4).ok_or(Moc3Error::BadOffset)?;
+        if end > data.len() {
+            return Err(Moc3Error::BadOffset);
+        }
+        Ok(CountInfo {
+            data,
+            base,
+            version,
+        })
     }
 
-    // L2D indexes this in elements of f32, not Vec2, so divide
-    // indices by 2 before using this.
-    pub fn positions(&self) -> &[Vec2] {
-        &self.table.keyform_positions.coords.value
+    #[inline]
+    fn at(&self, index: usize) -> u32 {
+        read_u32(self.data, self.base + index * 4)
     }
 
-    pub fn uvs(&self) -> &[Vec2] {
-        &self.table.uvs.uvs.value
+    count!(parts, 0);
+    count!(deformers, 1);
+    count!(warp_deformers, 2);
+    count!(rotation_deformers, 3);
+    count!(art_meshes, 4);
+    count!(parameters, 5);
+    count!(part_keyforms, 6);
+    count!(warp_deformer_keyforms, 7);
+    count!(rotation_deformer_keyforms, 8);
+    count!(art_mesh_keyforms, 9);
+    count!(keyform_positions, 10);
+    count!(parameter_binding_indices, 11);
+    count!(keyform_bindings, 12);
+    count!(parameter_bindings, 13);
+    count!(keys, 14);
+    count!(uvs, 15);
+    count!(vertex_indices, 16);
+    count!(art_mesh_masks, 17);
+    count!(draw_order_groups, 18);
+    count!(draw_order_group_objects, 19);
+    count!(glues, 20);
+    count!(glue_infos, 21);
+    count!(glue_keyforms, 22);
+
+    count!(Version::V4_02, keyform_multiply_colors, 23);
+    count!(Version::V4_02, keyform_screen_colors, 24);
+    count!(Version::V4_02, blend_shape_parameter_bindings, 25);
+    count!(Version::V4_02, blend_shape_keyform_bindings, 26);
+    count!(Version::V4_02, blend_shape_warp_deformers, 27);
+    count!(Version::V4_02, blend_shape_art_meshes, 28);
+    count!(Version::V4_02, blend_shape_constraint_indices, 29);
+    count!(Version::V4_02, blend_shape_constraints, 30);
+    count!(Version::V4_02, blend_shape_constraint_values, 31);
+}
+
+impl core::fmt::Debug for CountInfo<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CountInfo")
+            .field("parts", &self.parts())
+            .field("deformers", &self.deformers())
+            .field("warp_deformers", &self.warp_deformers())
+            .field("rotation_deformers", &self.rotation_deformers())
+            .field("art_meshes", &self.art_meshes())
+            .field("parameters", &self.parameters())
+            .field("keyform_positions", &self.keyform_positions())
+            .field("keys", &self.keys())
+            .field("uvs", &self.uvs())
+            .field("vertex_indices", &self.vertex_indices())
+            .field("glues", &self.glues())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Start of the section offset table (immediately after the 64-byte header).
+const TABLE: usize = 64;
+
+const OFF_COUNT_INFO: usize = TABLE; // 64
+const OFF_CANVAS_INFO: usize = TABLE + 4; // 68
+
+// first field (`data`) is an inline placeholder
+const OFF_PARTS: usize = 72;
+const OFF_DEFORMERS: usize = 104;
+const OFF_WARP_DEFORMERS: usize = 140;
+const OFF_ROTATION_DEFORMERS: usize = 164;
+// `runtime_ignored: [u32; 4]` + 16 pointers = 20 slots (80 bytes).
+const OFF_ART_MESHES: usize = 180;
+const OFF_PARAMETERS: usize = 260;
+const OFF_PART_KEYFORMS: usize = 296;
+const OFF_WARP_DEFORMER_KEYFORMS: usize = 300;
+const OFF_ROTATION_DEFORMER_KEYFORMS: usize = 308;
+const OFF_ART_MESH_KEYFORMS: usize = 336;
+const OFF_KEYFORM_POSITIONS: usize = 348;
+const OFF_PARAMETER_BINDING_INDICES: usize = 352;
+const OFF_KEYFORM_BINDINGS: usize = 356;
+const OFF_PARAMETER_BINDINGS: usize = 364;
+const OFF_KEYS: usize = 372;
+const OFF_UVS: usize = 376;
+const OFF_VERTEX_INDICES: usize = 380;
+const OFF_ART_MESH_MASKS: usize = 384;
+const OFF_DRAW_ORDER_GROUPS: usize = 388;
+const OFF_DRAW_ORDER_GROUP_OBJECTS: usize = 408;
+const OFF_GLUES: usize = 420;
+const OFF_GLUE_INFOS: usize = 456;
+const OFF_GLUE_KEYFORMS: usize = 464;
+
+// v3.03+
+const OFF_WARP_DEFORMER_KEYFORMS_V303: usize = 468;
+
+// v4.02+
+const OFF_PARAMETER_EXTENSIONS: usize = 472;
+const OFF_WARP_DEFORMER_KEYFORMS_V402: usize = 484;
+const OFF_ROTATION_DEFORMER_KEYFORMS_V402: usize = 488;
+const OFF_ART_MESH_KEYFORMS_V402: usize = 492;
+const OFF_KEYFORM_MULTIPLY_COLORS: usize = 496;
+const OFF_KEYFORM_SCREEN_COLORS: usize = 508;
+const OFF_PARAMETERS_V402: usize = 520;
+const OFF_BLEND_SHAPE_PARAMETER_BINDINGS: usize = 532;
+const OFF_BLEND_SHAPE_KEYFORM_BINDINGS: usize = 544;
+const OFF_BLEND_SHAPE_WARP_DEFORMERS: usize = 564;
+const OFF_BLEND_SHAPE_ART_MESHES: usize = 576;
+const OFF_BLEND_SHAPE_CONSTRAINT_INDICES: usize = 588;
+const OFF_BLEND_SHAPE_CONSTRAINTS: usize = 592;
+const OFF_BLEND_SHAPE_CONSTRAINT_VALUES: usize = 604;
+
+#[inline]
+fn read_u32(data: &[u8], off: usize) -> u32 {
+    u32::from_le_bytes(data[off..off + 4].try_into().unwrap())
+}
+
+#[inline]
+fn read_f32(data: &[u8], off: usize) -> f32 {
+    f32::from_le_bytes(data[off..off + 4].try_into().unwrap())
+}
+
+/// The byte just past the end of the section offset table for `version`. The
+/// whole table must be present for any field pointer to be readable.
+fn table_end(version: Version) -> usize {
+    if version >= Version::V4_02 {
+        OFF_BLEND_SHAPE_CONSTRAINT_VALUES + 8
+    } else if version >= Version::V3_03 {
+        OFF_WARP_DEFORMER_KEYFORMS_V303 + 4
+    } else {
+        OFF_GLUE_KEYFORMS + 4
+    }
+}
+
+/// Validate that a single array referenced by the offset table fits within
+/// `data` and is aligned for elements of type `T`.
+///
+/// * `base` – the base address of `data` in the process address space,
+///   used only for alignment checks.
+/// * `off`   – byte offset within `data` of the 4-byte file pointer.
+/// * `count` – expected number of `T` elements.
+fn check_section<T>(data: &[u8], base: usize, off: usize, count: usize) -> Result<(), Moc3Error> {
+    if count == 0 {
+        return Ok(());
+    }
+    let ptr = read_u32(data, off) as usize;
+    let bytes = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Moc3Error::BadOffset)?;
+    let end = ptr.checked_add(bytes).ok_or(Moc3Error::BadOffset)?;
+    if end > data.len() {
+        return Err(Moc3Error::BadOffset);
+    }
+
+    // All sections must be at least 8-byte aligned
+    if (base + ptr) % usize::max(std::mem::align_of::<T>(), 8) != 0 {
+        return Err(Moc3Error::SectionMisaligned);
+    }
+    Ok(())
+}
+
+/// Validate that every array referenced by the offset table fits within `data`
+/// and lands at an address aligned to its element type. After this succeeds the
+/// accessors can reinterpret the bytes as native slices without copying or
+/// risking a panic.
+///
+/// The set of arrays checked here mirrors the accessors below exactly.
+fn validate(data: &[u8], c: CountInfo) -> Result<(), Moc3Error> {
+    let base = data.as_ptr() as usize;
+
+    let parts = c.parts() as usize;
+    check_section::<Id>(data, base, OFF_PARTS + 4, parts)?;
+    for k in [8, 12, 16, 20, 24] {
+        check_section::<u32>(data, base, OFF_PARTS + k, parts)?;
+    }
+    check_section::<i32>(data, base, OFF_PARTS + 28, parts)?; // parent_part_indices
+
+    let deformers = c.deformers() as usize;
+    check_section::<Id>(data, base, OFF_DEFORMERS + 4, deformers)?;
+    for k in [8, 12, 16] {
+        check_section::<u32>(data, base, OFF_DEFORMERS + k, deformers)?;
+    }
+    check_section::<i32>(data, base, OFF_DEFORMERS + 20, deformers)?; // parent_part_indices
+    check_section::<i32>(data, base, OFF_DEFORMERS + 24, deformers)?; // parent_deformer_indices
+    for k in [28, 32] {
+        check_section::<u32>(data, base, OFF_DEFORMERS + k, deformers)?;
+    }
+
+    let warp_deformers = c.warp_deformers() as usize;
+    for k in [0, 4, 8, 12, 16, 20] {
+        check_section::<u32>(data, base, OFF_WARP_DEFORMERS + k, warp_deformers)?;
+    }
+
+    let rotation_deformers = c.rotation_deformers() as usize;
+    for k in [0, 4, 8] {
+        check_section::<u32>(data, base, OFF_ROTATION_DEFORMERS + k, rotation_deformers)?;
+    }
+    check_section::<f32>(data, base, OFF_ROTATION_DEFORMERS + 12, rotation_deformers)?; // base_angles
+
+    let art_meshes = c.art_meshes() as usize;
+    check_section::<Id>(data, base, OFF_ART_MESHES + 16, art_meshes)?;
+    for k in [20, 24, 28, 32, 36] {
+        check_section::<u32>(data, base, OFF_ART_MESHES + k, art_meshes)?;
+    }
+    check_section::<i32>(data, base, OFF_ART_MESHES + 40, art_meshes)?; // parent_part_indices
+    check_section::<i32>(data, base, OFF_ART_MESHES + 44, art_meshes)?; // parent_deformer_indices
+    check_section::<u32>(data, base, OFF_ART_MESHES + 48, art_meshes)?; // texture_nums
+    check_section::<u8>(data, base, OFF_ART_MESHES + 52, art_meshes)?; // flags
+    for k in [56, 60, 64, 68, 72, 76] {
+        check_section::<u32>(data, base, OFF_ART_MESHES + k, art_meshes)?;
+    }
+
+    let parameters = c.parameters() as usize;
+    check_section::<Id>(data, base, OFF_PARAMETERS + 4, parameters)?;
+    for k in [8, 12, 16] {
+        check_section::<f32>(data, base, OFF_PARAMETERS + k, parameters)?; // max/min/default values
+    }
+    for k in [20, 24, 28, 32] {
+        check_section::<u32>(data, base, OFF_PARAMETERS + k, parameters)?;
+    }
+
+    check_section::<f32>(data, base, OFF_PART_KEYFORMS, c.part_keyforms() as usize)?; // draw_orders
+
+    let wdk = c.warp_deformer_keyforms() as usize;
+    check_section::<f32>(data, base, OFF_WARP_DEFORMER_KEYFORMS, wdk)?; // opacities
+    check_section::<u32>(data, base, OFF_WARP_DEFORMER_KEYFORMS + 4, wdk)?; // position_sources_starts
+
+    let rdk = c.rotation_deformer_keyforms() as usize;
+    for k in [0, 4, 8, 12, 16] {
+        check_section::<f32>(data, base, OFF_ROTATION_DEFORMER_KEYFORMS + k, rdk)?; // opacities/angles/origins/scales
+    }
+    for k in [20, 24] {
+        check_section::<u32>(data, base, OFF_ROTATION_DEFORMER_KEYFORMS + k, rdk)?; // is_reflect_x/y
+    }
+
+    let amk = c.art_mesh_keyforms() as usize;
+    for k in [0, 4] {
+        check_section::<f32>(data, base, OFF_ART_MESH_KEYFORMS + k, amk)?; // opacities, draw_orders
+    }
+    check_section::<u32>(data, base, OFF_ART_MESH_KEYFORMS + 8, amk)?; // position_sources_starts
+
+    check_section::<Vec2>(
+        data,
+        base,
+        OFF_KEYFORM_POSITIONS,
+        c.keyform_positions() as usize / 2,
+    )?;
+    check_section::<u32>(
+        data,
+        base,
+        OFF_PARAMETER_BINDING_INDICES,
+        c.parameter_binding_indices() as usize,
+    )?;
+
+    let kb = c.keyform_bindings() as usize;
+    check_section::<u32>(data, base, OFF_KEYFORM_BINDINGS, kb)?;
+    check_section::<u32>(data, base, OFF_KEYFORM_BINDINGS + 4, kb)?;
+
+    let pb = c.parameter_bindings() as usize;
+    check_section::<u32>(data, base, OFF_PARAMETER_BINDINGS, pb)?;
+    check_section::<u32>(data, base, OFF_PARAMETER_BINDINGS + 4, pb)?;
+
+    check_section::<f32>(data, base, OFF_KEYS, c.keys() as usize)?;
+    check_section::<Vec2>(data, base, OFF_UVS, c.uvs() as usize / 2)?;
+    check_section::<u16>(data, base, OFF_VERTEX_INDICES, c.vertex_indices() as usize)?;
+    check_section::<u32>(data, base, OFF_ART_MESH_MASKS, c.art_mesh_masks() as usize)?;
+
+    let dog = c.draw_order_groups() as usize;
+    for k in [0, 4, 8, 12, 16] {
+        check_section::<u32>(data, base, OFF_DRAW_ORDER_GROUPS + k, dog)?;
+    }
+
+    let dogo = c.draw_order_group_objects() as usize;
+    for k in [0, 4] {
+        check_section::<u32>(data, base, OFF_DRAW_ORDER_GROUP_OBJECTS + k, dogo)?;
+    }
+    check_section::<i32>(data, base, OFF_DRAW_ORDER_GROUP_OBJECTS + 8, dogo)?; // self_indices
+
+    let glues = c.glues() as usize;
+    check_section::<Id>(data, base, OFF_GLUES + 4, glues)?;
+    for k in [8, 12, 16, 20, 24, 28, 32] {
+        check_section::<u32>(data, base, OFF_GLUES + k, glues)?;
+    }
+
+    let glue_infos = c.glue_infos() as usize;
+    check_section::<f32>(data, base, OFF_GLUE_INFOS, glue_infos)?; // weights
+    check_section::<u16>(data, base, OFF_GLUE_INFOS + 4, glue_infos)?; // vertex_indices
+
+    check_section::<f32>(data, base, OFF_GLUE_KEYFORMS, c.glue_keyforms() as usize)?; // intensities
+
+    if c.version >= Version::V3_03 {
+        check_section::<u32>(data, base, OFF_WARP_DEFORMER_KEYFORMS_V303, warp_deformers)?;
+    }
+
+    if c.version >= Version::V4_02 {
+        check_section::<u32>(data, base, OFF_PARAMETER_EXTENSIONS + 4, parameters)?;
+        check_section::<u32>(data, base, OFF_PARAMETER_EXTENSIONS + 8, parameters)?;
+        check_section::<u32>(data, base, OFF_WARP_DEFORMER_KEYFORMS_V402, warp_deformers)?;
+        check_section::<u32>(
+            data,
+            base,
+            OFF_ROTATION_DEFORMER_KEYFORMS_V402,
+            rotation_deformers,
+        )?;
+        check_section::<u32>(data, base, OFF_ART_MESH_KEYFORMS_V402, art_meshes)?;
+
+        let mc = c.keyform_multiply_colors() as usize;
+        let sc = c.keyform_screen_colors() as usize;
+        for k in [0, 4, 8] {
+            check_section::<f32>(data, base, OFF_KEYFORM_MULTIPLY_COLORS + k, mc)?; // r/g/b
+            check_section::<f32>(data, base, OFF_KEYFORM_SCREEN_COLORS + k, sc)?; // r/g/b
+        }
+
+        for k in [0, 4, 8] {
+            check_section::<u32>(data, base, OFF_PARAMETERS_V402 + k, parameters)?;
+        }
+
+        let bspb = c.blend_shape_parameter_bindings() as usize;
+        for k in [0, 4, 8] {
+            check_section::<u32>(data, base, OFF_BLEND_SHAPE_PARAMETER_BINDINGS + k, bspb)?;
+        }
+
+        let bskb = c.blend_shape_keyform_bindings() as usize;
+        for k in [0, 4, 8, 12, 16] {
+            check_section::<u32>(data, base, OFF_BLEND_SHAPE_KEYFORM_BINDINGS + k, bskb)?;
+        }
+
+        let bswd = c.blend_shape_warp_deformers() as usize;
+        let bsam = c.blend_shape_art_meshes() as usize;
+        for k in [0, 4, 8] {
+            check_section::<u32>(data, base, OFF_BLEND_SHAPE_WARP_DEFORMERS + k, bswd)?;
+            check_section::<u32>(data, base, OFF_BLEND_SHAPE_ART_MESHES + k, bsam)?;
+        }
+
+        check_section::<u32>(
+            data,
+            base,
+            OFF_BLEND_SHAPE_CONSTRAINT_INDICES,
+            c.blend_shape_constraint_indices() as usize,
+        )?;
+
+        let bsc = c.blend_shape_constraints() as usize;
+        for k in [0, 4, 8] {
+            check_section::<u32>(data, base, OFF_BLEND_SHAPE_CONSTRAINTS + k, bsc)?;
+        }
+
+        let bscv = c.blend_shape_constraint_values() as usize;
+        check_section::<f32>(data, base, OFF_BLEND_SHAPE_CONSTRAINT_VALUES, bscv)?; // keys
+        check_section::<f32>(data, base, OFF_BLEND_SHAPE_CONSTRAINT_VALUES + 4, bscv)?; // weights
+    }
+
+    Ok(())
+}
+
+/// A zero-copy view over the contents of a MOC3 file.
+///
+/// The `Yokeable` impl (used by [`crate::owned::OwnedMoc3`]) is sound because
+/// `Moc3` only holds shared references and is covariant in its lifetime.
+#[derive(Clone, Copy, Yokeable)]
+pub struct Moc3<'a> {
+    data: &'a [u8],
+    version: Version,
+    counts: CountInfo<'a>,
+}
+
+/// Generates an array section accessor.
+///
+/// `$cf` is the [`CountInfo`] count accessor giving the element count; `$off` is
+/// the absolute byte offset of the file pointer; `$t` is the native element type.
+///
+/// With a leading `$min` version the section exists only from that version
+/// onward, so the accessor returns `Option` (`None` on older files). Without it
+/// the section is always present and the slice is returned directly.
+macro_rules! acc {
+    ($(#[$m:meta])* $name:ident, $off:expr, $cf:ident, $t:ty) => {
+        $(#[$m])*
+        #[inline]
+        pub fn $name(&self) -> &'a [$t] {
+            self.arr::<$t>($off, self.counts.$cf() as usize)
+        }
+    };
+    ($(#[$m:meta])* $min:path, $name:ident, $off:expr, $cf:ident, $t:ty) => {
+        $(#[$m])*
+        #[inline]
+        pub fn $name(&self) -> Option<&'a [$t]> {
+            if self.version >= $min {
+                Some(self.arr::<$t>($off, self.counts.$cf() as usize))
+            } else {
+                None
+            }
+        }
+    };
+}
+
+impl<'a> Moc3<'a> {
+    /// Parse and validate the header, count table, and every section, returning
+    /// a zero-copy view.
+    ///
+    /// On success, every accessor is guaranteed to be in bounds and correctly
+    /// aligned, so the accessors themselves are infallible and never copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the magic / version / endianness flag are invalid,
+    /// if the buffer is not 4-byte aligned (see [the module docs](self)), or if
+    /// any section's data would run past the end of the file or land at a
+    /// misaligned address.
+    pub fn new(data: &'a [u8]) -> Result<Self, Moc3Error> {
+        // Header is padded to 64 bytes, and the count info pointer lives right
+        // after it, so we need at least that much.
+        if data.len() < TABLE + 8 {
+            return Err(Moc3Error::TooSmall);
+        }
+        if &data[0..4] != b"MOC3" {
+            return Err(Moc3Error::BadMagic);
+        }
+        let version = match data[4] {
+            1 => Version::V3_00,
+            2 => Version::V3_03,
+            3 => Version::V4_00,
+            4 => Version::V4_02,
+            v => return Err(Moc3Error::UnknownVersion(v)),
+        };
+        if data[5] != 0 {
+            return Err(Moc3Error::BigEndianUnsupported);
+        }
+
+        // Every element type used here has alignment <= 4, so a 4-byte aligned
+        // buffer plus element-aligned section offsets guarantees aligned slices.
+        if (data.as_ptr() as usize) % 4 != 0 {
+            return Err(Moc3Error::BufferMisaligned);
+        }
+
+        // The whole offset table must be present so reading any field pointer
+        // (in the accessors and in `validate`) cannot go out of bounds.
+        if data.len() < table_end(version) {
+            return Err(Moc3Error::TooSmall);
+        }
+
+        let counts = CountInfo::new(data, version)?;
+
+        validate(data, counts)?;
+
+        Ok(Moc3 {
+            data,
+            version,
+            counts,
+        })
+    }
+
+    /// The file's format version.
+    #[inline]
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    /// A zero-copy reader for the per-section element counts.
+    #[inline]
+    pub fn counts(&self) -> CountInfo<'a> {
+        self.counts
+    }
+
+    /// The underlying byte slice.
+    #[inline]
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
+    /// Decode the canvas info block.
+    pub fn canvas_info(&self) -> CanvasInfo {
+        let p = read_u32(self.data, OFF_CANVAS_INFO) as usize;
+        CanvasInfo {
+            pixels_per_unit: read_f32(self.data, p),
+            x_origin: read_f32(self.data, p + 4),
+            y_origin: read_f32(self.data, p + 8),
+            canvas_width: read_f32(self.data, p + 12),
+            canvas_height: read_f32(self.data, p + 16),
+            canvas_flags: self.data[p + 20],
+        }
+    }
+
+    /// Read the file pointer at `field_off`, then return `count` elements of
+    /// type `T` from where it points, as a zero-copy slice.
+    ///
+    /// This is infallible because [`Moc3::new`] has already validated that every
+    /// section is in bounds and correctly aligned; the `cast_slice` below cannot
+    /// panic for a view that passed validation.
+    #[inline]
+    fn arr<T: Pod>(&self, field_off: usize, count: usize) -> &'a [T] {
+        if count == 0 {
+            return &[];
+        }
+        let ptr = read_u32(self.data, field_off) as usize;
+        let bytes = &self.data[ptr..ptr + count * size_of::<T>()];
+        cast_slice(bytes)
+    }
+
+    // ----- parts -----
+    acc!(part_ids, OFF_PARTS + 4, parts, Id);
+    acc!(
+        part_keyform_binding_sources_indices,
+        OFF_PARTS + 8,
+        parts,
+        u32
+    );
+    acc!(part_keyform_sources_starts, OFF_PARTS + 12, parts, u32);
+    acc!(part_keyform_sources_counts, OFF_PARTS + 16, parts, u32);
+    acc!(part_is_visible, OFF_PARTS + 20, parts, u32);
+    acc!(part_is_enabled, OFF_PARTS + 24, parts, u32);
+    acc!(part_parent_part_indices, OFF_PARTS + 28, parts, i32);
+
+    // ----- deformers -----
+    acc!(deformer_ids, OFF_DEFORMERS + 4, deformers, Id);
+    acc!(
+        deformer_keyform_binding_sources_indices,
+        OFF_DEFORMERS + 8,
+        deformers,
+        u32
+    );
+    acc!(deformer_is_visible, OFF_DEFORMERS + 12, deformers, u32);
+    acc!(deformer_is_enabled, OFF_DEFORMERS + 16, deformers, u32);
+    acc!(
+        deformer_parent_part_indices,
+        OFF_DEFORMERS + 20,
+        deformers,
+        i32
+    );
+    acc!(
+        deformer_parent_deformer_indices,
+        OFF_DEFORMERS + 24,
+        deformers,
+        i32
+    );
+    acc!(
+        /// Deformer kind: `0` = warp deformer, `1` = rotation deformer.
+        deformer_types, OFF_DEFORMERS + 28, deformers, u32);
+    acc!(
+        deformer_specific_sources_indices,
+        OFF_DEFORMERS + 32,
+        deformers,
+        u32
+    );
+
+    // ----- warp deformers -----
+    acc!(
+        warp_deformer_keyform_binding_sources_indices,
+        OFF_WARP_DEFORMERS,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        warp_deformer_keyform_sources_starts,
+        OFF_WARP_DEFORMERS + 4,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        warp_deformer_keyform_sources_counts,
+        OFF_WARP_DEFORMERS + 8,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        warp_deformer_vertex_counts,
+        OFF_WARP_DEFORMERS + 12,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        warp_deformer_rows,
+        OFF_WARP_DEFORMERS + 16,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        warp_deformer_columns,
+        OFF_WARP_DEFORMERS + 20,
+        warp_deformers,
+        u32
+    );
+
+    // ----- rotation deformers -----
+    acc!(
+        rotation_deformer_keyform_binding_sources_indices,
+        OFF_ROTATION_DEFORMERS,
+        rotation_deformers,
+        u32
+    );
+    acc!(
+        rotation_deformer_keyform_sources_starts,
+        OFF_ROTATION_DEFORMERS + 4,
+        rotation_deformers,
+        u32
+    );
+    acc!(
+        rotation_deformer_keyform_sources_counts,
+        OFF_ROTATION_DEFORMERS + 8,
+        rotation_deformers,
+        u32
+    );
+    acc!(
+        rotation_deformer_base_angles,
+        OFF_ROTATION_DEFORMERS + 12,
+        rotation_deformers,
+        f32
+    );
+
+    // ----- art meshes -----
+    acc!(art_mesh_ids, OFF_ART_MESHES + 16, art_meshes, Id);
+    acc!(
+        art_mesh_keyform_binding_sources_indices,
+        OFF_ART_MESHES + 20,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_keyform_sources_starts,
+        OFF_ART_MESHES + 24,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_keyform_sources_counts,
+        OFF_ART_MESHES + 28,
+        art_meshes,
+        u32
+    );
+    acc!(art_mesh_is_visible, OFF_ART_MESHES + 32, art_meshes, u32);
+    acc!(art_mesh_is_enabled, OFF_ART_MESHES + 36, art_meshes, u32);
+    acc!(
+        art_mesh_parent_part_indices,
+        OFF_ART_MESHES + 40,
+        art_meshes,
+        i32
+    );
+    acc!(
+        art_mesh_parent_deformer_indices,
+        OFF_ART_MESHES + 44,
+        art_meshes,
+        i32
+    );
+    acc!(art_mesh_texture_nums, OFF_ART_MESHES + 48, art_meshes, u32);
+    acc!(art_mesh_flags, OFF_ART_MESHES + 52, art_meshes, u8);
+    acc!(art_mesh_vertex_counts, OFF_ART_MESHES + 56, art_meshes, u32);
+    acc!(
+        art_mesh_uv_sources_starts,
+        OFF_ART_MESHES + 60,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_vertex_index_sources_starts,
+        OFF_ART_MESHES + 64,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_vertex_index_sources_counts,
+        OFF_ART_MESHES + 68,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_mask_sources_starts,
+        OFF_ART_MESHES + 72,
+        art_meshes,
+        u32
+    );
+    acc!(
+        art_mesh_mask_sources_counts,
+        OFF_ART_MESHES + 76,
+        art_meshes,
+        u32
+    );
+
+    // ----- parameters -----
+    acc!(parameter_ids, OFF_PARAMETERS + 4, parameters, Id);
+    acc!(parameter_max_values, OFF_PARAMETERS + 8, parameters, f32);
+    acc!(parameter_min_values, OFF_PARAMETERS + 12, parameters, f32);
+    acc!(
+        parameter_default_values,
+        OFF_PARAMETERS + 16,
+        parameters,
+        f32
+    );
+    acc!(parameter_is_repeat, OFF_PARAMETERS + 20, parameters, u32);
+    acc!(
+        parameter_decimal_places,
+        OFF_PARAMETERS + 24,
+        parameters,
+        u32
+    );
+    acc!(
+        parameter_binding_sources_starts,
+        OFF_PARAMETERS + 28,
+        parameters,
+        u32
+    );
+    acc!(
+        parameter_binding_sources_counts,
+        OFF_PARAMETERS + 32,
+        parameters,
+        u32
+    );
+
+    // ----- keyforms -----
+    acc!(
+        part_keyform_draw_orders,
+        OFF_PART_KEYFORMS,
+        part_keyforms,
+        f32
+    );
+
+    acc!(
+        warp_deformer_keyform_opacities,
+        OFF_WARP_DEFORMER_KEYFORMS,
+        warp_deformer_keyforms,
+        f32
+    );
+    acc!(
+        warp_deformer_keyform_position_sources_starts,
+        OFF_WARP_DEFORMER_KEYFORMS + 4,
+        warp_deformer_keyforms,
+        u32
+    );
+
+    acc!(
+        rotation_deformer_keyform_opacities,
+        OFF_ROTATION_DEFORMER_KEYFORMS,
+        rotation_deformer_keyforms,
+        f32
+    );
+    acc!(
+        rotation_deformer_keyform_angles,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 4,
+        rotation_deformer_keyforms,
+        f32
+    );
+    acc!(
+        rotation_deformer_keyform_x_origin,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 8,
+        rotation_deformer_keyforms,
+        f32
+    );
+    acc!(
+        rotation_deformer_keyform_y_origin,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 12,
+        rotation_deformer_keyforms,
+        f32
+    );
+    acc!(
+        rotation_deformer_keyform_scales,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 16,
+        rotation_deformer_keyforms,
+        f32
+    );
+    acc!(
+        rotation_deformer_keyform_is_reflect_x,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 20,
+        rotation_deformer_keyforms,
+        u32
+    );
+    acc!(
+        rotation_deformer_keyform_is_reflect_y,
+        OFF_ROTATION_DEFORMER_KEYFORMS + 24,
+        rotation_deformer_keyforms,
+        u32
+    );
+
+    acc!(
+        art_mesh_keyform_opacities,
+        OFF_ART_MESH_KEYFORMS,
+        art_mesh_keyforms,
+        f32
+    );
+    acc!(
+        art_mesh_keyform_draw_orders,
+        OFF_ART_MESH_KEYFORMS + 4,
+        art_mesh_keyforms,
+        f32
+    );
+    acc!(
+        art_mesh_keyform_position_sources_starts,
+        OFF_ART_MESH_KEYFORMS + 8,
+        art_mesh_keyforms,
+        u32
+    );
+
+    /// Keyform position coordinates.
+    ///
+    /// L2D indexes these in units of `f32`, not `Vec2`, so the
+    /// `keyform_position_sources_starts` indices must be divided by 2 before
+    /// indexing into this slice.
+    pub fn positions(&self) -> &'a [Vec2] {
+        self.arr::<Vec2>(
+            OFF_KEYFORM_POSITIONS,
+            self.counts.keyform_positions() as usize / 2,
+        )
+    }
+
+    acc!(
+        parameter_binding_indices,
+        OFF_PARAMETER_BINDING_INDICES,
+        parameter_binding_indices,
+        u32
+    );
+
+    acc!(
+        keyform_binding_parameter_binding_index_sources_starts,
+        OFF_KEYFORM_BINDINGS,
+        keyform_bindings,
+        u32
+    );
+    acc!(
+        keyform_binding_parameter_binding_index_sources_counts,
+        OFF_KEYFORM_BINDINGS + 4,
+        keyform_bindings,
+        u32
+    );
+
+    acc!(
+        parameter_binding_keys_sources_starts,
+        OFF_PARAMETER_BINDINGS,
+        parameter_bindings,
+        u32
+    );
+    acc!(
+        parameter_binding_keys_sources_counts,
+        OFF_PARAMETER_BINDINGS + 4,
+        parameter_bindings,
+        u32
+    );
+
+    acc!(keys, OFF_KEYS, keys, f32);
+
+    /// UV coordinates. Indexed in units of `f32` like [`positions`](Self::positions).
+    pub fn uvs(&self) -> &'a [Vec2] {
+        self.arr::<Vec2>(OFF_UVS, self.counts.uvs() as usize / 2)
+    }
+
+    acc!(vertex_indices, OFF_VERTEX_INDICES, vertex_indices, u16);
+
+    acc!(
+        art_mesh_mask_source_indices,
+        OFF_ART_MESH_MASKS,
+        art_mesh_masks,
+        u32
+    );
+
+    // ----- draw order groups -----
+    acc!(
+        draw_order_group_object_sources_starts,
+        OFF_DRAW_ORDER_GROUPS,
+        draw_order_groups,
+        u32
+    );
+    acc!(
+        draw_order_group_object_sources_counts,
+        OFF_DRAW_ORDER_GROUPS + 4,
+        draw_order_groups,
+        u32
+    );
+    acc!(
+        draw_order_group_object_sources_total_counts,
+        OFF_DRAW_ORDER_GROUPS + 8,
+        draw_order_groups,
+        u32
+    );
+    acc!(
+        draw_order_group_maximum_draw_orders,
+        OFF_DRAW_ORDER_GROUPS + 12,
+        draw_order_groups,
+        u32
+    );
+    acc!(
+        draw_order_group_minimum_draw_orders,
+        OFF_DRAW_ORDER_GROUPS + 16,
+        draw_order_groups,
+        u32
+    );
+
+    acc!(
+        draw_order_group_object_types,
+        OFF_DRAW_ORDER_GROUP_OBJECTS,
+        draw_order_group_objects,
+        u32
+    );
+    acc!(
+        draw_order_group_object_indices,
+        OFF_DRAW_ORDER_GROUP_OBJECTS + 4,
+        draw_order_group_objects,
+        u32
+    );
+    acc!(
+        draw_order_group_object_self_indices,
+        OFF_DRAW_ORDER_GROUP_OBJECTS + 8,
+        draw_order_group_objects,
+        i32
+    );
+
+    // ----- glues -----
+    acc!(glue_ids, OFF_GLUES + 4, glues, Id);
+    acc!(
+        glue_keyform_binding_sources_indices,
+        OFF_GLUES + 8,
+        glues,
+        u32
+    );
+    acc!(glue_keyform_sources_starts, OFF_GLUES + 12, glues, u32);
+    acc!(glue_keyform_sources_counts, OFF_GLUES + 16, glues, u32);
+    acc!(glue_art_mesh_indices_a, OFF_GLUES + 20, glues, u32);
+    acc!(glue_art_mesh_indices_b, OFF_GLUES + 24, glues, u32);
+    acc!(glue_info_sources_starts, OFF_GLUES + 28, glues, u32);
+    acc!(glue_info_sources_counts, OFF_GLUES + 32, glues, u32);
+
+    acc!(glue_info_weights, OFF_GLUE_INFOS, glue_infos, f32);
+    acc!(
+        glue_info_vertex_indices,
+        OFF_GLUE_INFOS + 4,
+        glue_infos,
+        u16
+    );
+
+    acc!(
+        glue_keyform_intensities,
+        OFF_GLUE_KEYFORMS,
+        glue_keyforms,
+        f32
+    );
+
+    // ----- v3.03+ -----
+    acc!(
+        /// Per warp deformer "is new deformer" flags (v3.03+).
+        Version::V3_03,
+        warp_deformer_is_new_deformer,
+        OFF_WARP_DEFORMER_KEYFORMS_V303,
+        warp_deformers,
+        u32
+    );
+
+    // ----- v4.02+ -----
+    acc!(
+        Version::V4_02,
+        parameter_extension_keys_sources_starts,
+        OFF_PARAMETER_EXTENSIONS + 4,
+        parameters,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        parameter_extension_keys_sources_counts,
+        OFF_PARAMETER_EXTENSIONS + 8,
+        parameters,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        warp_deformer_keyform_color_sources_start,
+        OFF_WARP_DEFORMER_KEYFORMS_V402,
+        warp_deformers,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        rotation_deformer_keyform_color_sources_start,
+        OFF_ROTATION_DEFORMER_KEYFORMS_V402,
+        rotation_deformers,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        art_mesh_keyform_color_sources_start,
+        OFF_ART_MESH_KEYFORMS_V402,
+        art_meshes,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        keyform_multiply_colors_red,
+        OFF_KEYFORM_MULTIPLY_COLORS,
+        keyform_multiply_colors,
+        f32
+    );
+    acc!(
+        Version::V4_02,
+        keyform_multiply_colors_green,
+        OFF_KEYFORM_MULTIPLY_COLORS + 4,
+        keyform_multiply_colors,
+        f32
+    );
+    acc!(
+        Version::V4_02,
+        keyform_multiply_colors_blue,
+        OFF_KEYFORM_MULTIPLY_COLORS + 8,
+        keyform_multiply_colors,
+        f32
+    );
+
+    acc!(
+        Version::V4_02,
+        keyform_screen_colors_red,
+        OFF_KEYFORM_SCREEN_COLORS,
+        keyform_screen_colors,
+        f32
+    );
+    acc!(
+        Version::V4_02,
+        keyform_screen_colors_green,
+        OFF_KEYFORM_SCREEN_COLORS + 4,
+        keyform_screen_colors,
+        f32
+    );
+    acc!(
+        Version::V4_02,
+        keyform_screen_colors_blue,
+        OFF_KEYFORM_SCREEN_COLORS + 8,
+        keyform_screen_colors,
+        f32
+    );
+
+    acc!(
+        Version::V4_02,
+        parameter_types,
+        OFF_PARAMETERS_V402,
+        parameters,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        parameter_blend_shape_binding_sources_starts,
+        OFF_PARAMETERS_V402 + 4,
+        parameters,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        parameter_blend_shape_binding_sources_counts,
+        OFF_PARAMETERS_V402 + 8,
+        parameters,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_parameter_binding_keys_sources_starts,
+        OFF_BLEND_SHAPE_PARAMETER_BINDINGS,
+        blend_shape_parameter_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_parameter_binding_keys_sources_counts,
+        OFF_BLEND_SHAPE_PARAMETER_BINDINGS + 4,
+        blend_shape_parameter_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_parameter_binding_base_key_indices,
+        OFF_BLEND_SHAPE_PARAMETER_BINDINGS + 8,
+        blend_shape_parameter_bindings,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_keyform_binding_parameter_binding_sources_indices,
+        OFF_BLEND_SHAPE_KEYFORM_BINDINGS,
+        blend_shape_keyform_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_keyform_binding_keyform_sources_starts,
+        OFF_BLEND_SHAPE_KEYFORM_BINDINGS + 4,
+        blend_shape_keyform_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_keyform_binding_keyform_sources_counts,
+        OFF_BLEND_SHAPE_KEYFORM_BINDINGS + 8,
+        blend_shape_keyform_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_keyform_binding_constraint_index_sources_starts,
+        OFF_BLEND_SHAPE_KEYFORM_BINDINGS + 12,
+        blend_shape_keyform_bindings,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_keyform_binding_constraint_index_sources_counts,
+        OFF_BLEND_SHAPE_KEYFORM_BINDINGS + 16,
+        blend_shape_keyform_bindings,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_warp_deformer_target_indices,
+        OFF_BLEND_SHAPE_WARP_DEFORMERS,
+        blend_shape_warp_deformers,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_warp_deformer_keyform_binding_sources_starts,
+        OFF_BLEND_SHAPE_WARP_DEFORMERS + 4,
+        blend_shape_warp_deformers,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_warp_deformer_keyform_binding_sources_counts,
+        OFF_BLEND_SHAPE_WARP_DEFORMERS + 8,
+        blend_shape_warp_deformers,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_art_mesh_target_indices,
+        OFF_BLEND_SHAPE_ART_MESHES,
+        blend_shape_art_meshes,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_art_mesh_keyform_binding_sources_starts,
+        OFF_BLEND_SHAPE_ART_MESHES + 4,
+        blend_shape_art_meshes,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_art_mesh_keyform_binding_sources_counts,
+        OFF_BLEND_SHAPE_ART_MESHES + 8,
+        blend_shape_art_meshes,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_sources_indices,
+        OFF_BLEND_SHAPE_CONSTRAINT_INDICES,
+        blend_shape_constraint_indices,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_parameter_indices,
+        OFF_BLEND_SHAPE_CONSTRAINTS,
+        blend_shape_constraints,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_value_sources_starts,
+        OFF_BLEND_SHAPE_CONSTRAINTS + 4,
+        blend_shape_constraints,
+        u32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_value_sources_counts,
+        OFF_BLEND_SHAPE_CONSTRAINTS + 8,
+        blend_shape_constraints,
+        u32
+    );
+
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_value_keys,
+        OFF_BLEND_SHAPE_CONSTRAINT_VALUES,
+        blend_shape_constraint_values,
+        f32
+    );
+    acc!(
+        Version::V4_02,
+        blend_shape_constraint_value_weights,
+        OFF_BLEND_SHAPE_CONSTRAINT_VALUES + 4,
+        blend_shape_constraint_values,
+        f32
+    );
+}
+
+impl std::fmt::Debug for Moc3<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Moc3")
+            .field("version", &self.version)
+            .field("len", &self.data.len())
+            .field("counts", &self.counts)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_bad_input() {
+        assert!(matches!(Moc3::new(&[]), Err(Moc3Error::TooSmall)));
+        let mut bad = vec![0u8; 128];
+        bad[0..4].copy_from_slice(b"XXXX");
+        assert!(matches!(Moc3::new(&bad), Err(Moc3Error::BadMagic)));
+        bad[0..4].copy_from_slice(b"MOC3");
+        bad[4] = 99;
+        assert!(matches!(
+            Moc3::new(&bad),
+            Err(Moc3Error::UnknownVersion(99))
+        ));
+        bad[4] = 4;
+        bad[5] = 1;
+        assert!(matches!(
+            Moc3::new(&bad),
+            Err(Moc3Error::BigEndianUnsupported)
+        ));
     }
 }

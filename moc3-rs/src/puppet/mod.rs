@@ -11,7 +11,7 @@ use indextree::{Arena, NodeId};
 use node::PartNode;
 
 use crate::{
-    data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3Data, ParameterType},
+    data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3, ParameterType},
     deformer::{
         glue::apply_glue,
         rotation_deformer::{
@@ -405,25 +405,24 @@ impl Puppet {
     }
 }
 
-pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
-    let art_meshes = &read.table.art_meshes;
-    let parameters = &read.table.parameters;
-    let keyform_bindings = &read.table.keyform_bindings;
+pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
     let positions = read.positions();
+    let kb_starts = read.keyform_binding_parameter_binding_index_sources_starts();
+    let kb_counts = read.keyform_binding_parameter_binding_index_sources_counts();
 
     // We store our data in a slightly different way than how it was intended, so we
     // need this map of parameter binding index back up to the parameter itself. This is
     // the parameter binding pulling the data, instead of the parameter pushing the data to
     // all of the bindings. Which is better or worse for performance / code I'm not sure.
     let mut parameter_bindings_to_parameter =
-        vec![0usize; read.table.count_info.parameter_bindings as usize];
+        vec![0usize; read.counts().parameter_bindings() as usize];
     let mut blend_shape_parameter_bindings_to_parameter =
-        vec![0usize; read.table.count_info.blend_shape_parameter_bindings as usize];
-    for i in 0..read.table.count_info.parameters {
+        vec![0usize; read.counts().blend_shape_parameter_bindings() as usize];
+    for i in 0..read.counts().parameters() {
         let i = i as usize;
 
-        let start = parameters.parameter_binding_sources_starts[i] as usize;
-        let count = parameters.parameter_binding_sources_counts[i] as usize;
+        let start = read.parameter_binding_sources_starts()[i] as usize;
+        let count = read.parameter_binding_sources_counts()[i] as usize;
 
         for a in start..(start + count) {
             parameter_bindings_to_parameter[a] = i;
@@ -431,12 +430,12 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
         // I think this works, as the way the format should not have regular
         // parameter bindings for blend shape parameters.
-        if let Some(parameters_v402) = &read.table.parameters_v402 {
-            if parameters_v402.parameter_types[i] == ParameterType::BlendShape {
+        if let Some(parameter_types) = read.parameter_types() {
+            if parameter_types[i] == ParameterType::BlendShape as u32 {
                 let start =
-                    parameters_v402.blend_shape_parameter_binding_sources_starts[i] as usize;
+                    read.parameter_blend_shape_binding_sources_starts().unwrap()[i] as usize;
                 let count =
-                    parameters_v402.blend_shape_parameter_binding_sources_counts[i] as usize;
+                    read.parameter_blend_shape_binding_sources_counts().unwrap()[i] as usize;
 
                 for a in start..(start + count) {
                     blend_shape_parameter_bindings_to_parameter[a] = i;
@@ -456,47 +455,37 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
     let mut node_roots: Vec<NodeId> = Vec::new();
     let mut node_arena = Arena::<DeformerNode>::with_capacity(
-        (read.table.count_info.art_meshes
-            + read.table.count_info.warp_deformers
-            + read.table.count_info.rotation_deformers) as usize,
+        (read.counts().art_meshes()
+            + read.counts().warp_deformers()
+            + read.counts().rotation_deformers()) as usize,
     );
 
     let mut deformer_indices_to_node_ids: Vec<Option<NodeId>> =
-        vec![None; read.table.count_info.deformers as usize];
+        vec![None; read.counts().deformers() as usize];
 
-    let deformers = &read.table.deformers;
-    let warp_deformers = &read.table.warp_deformers;
-    let warp_deformer_keyforms = &read.table.warp_deformer_keyforms;
-    let warp_deformer_keyforms_v402 = read.table.warp_deformer_keyforms_v402.as_ref();
-    let rotation_deformers = &read.table.rotation_deformers;
-    let rotation_deformer_keyforms = &read.table.rotation_deformer_keyforms;
-    let rotation_deformer_keyforms_v402 = read.table.rotation_deformer_keyforms_v402.as_ref();
-
-    for i in 0..read.table.count_info.deformers {
+    for i in 0..read.counts().deformers() {
         let i: usize = i as usize;
-        let specific = deformers.specific_sources_indices[i] as usize;
+        let specific = read.deformer_specific_sources_indices()[i] as usize;
 
-        let parent_deformer_index = deformers.parent_deformer_indices[i];
-        if deformers.types[i] == 0 {
-            let vertexes = warp_deformers.vertex_counts[specific] as usize;
+        let parent_deformer_index = read.deformer_parent_deformer_indices()[i];
+        if read.deformer_types()[i] == 0 {
+            let vertexes = read.warp_deformer_vertex_counts()[specific] as usize;
 
             let is_new_deformerr = read
-                .table
-                .warp_deformer_keyforms_v303
-                .as_ref()
-                .map(|x| x.is_new_deformerrs[specific])
+                .warp_deformer_is_new_deformer()
+                .map(|x| x[specific])
                 .unwrap_or(0);
 
             {
                 let node_to_append = DeformerNode {
-                    id: deformers.ids[i].name.to_string(),
+                    id: read.deformer_ids()[i].name().to_string(),
                     broad_index: i as u32,
-                    parent_part_index: deformers.parent_part_indices[i],
-                    is_enabled: deformers.is_enabled[i] != 0,
+                    parent_part_index: read.deformer_parent_part_indices()[i],
+                    is_enabled: read.deformer_is_enabled()[i] != 0,
                     data: node::NodeKind::WarpDeformer(
                         WarpDeformerData {
-                            rows: warp_deformers.rows[specific],
-                            columns: warp_deformers.columns[specific],
+                            rows: read.warp_deformer_rows()[specific],
+                            columns: read.warp_deformer_columns()[specific],
                             is_new_deformerr: is_new_deformerr != 0,
                         },
                         specific as u32,
@@ -516,35 +505,34 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 deformer_indices_to_node_ids[i] = Some(res);
             }
 
-            let binding_index = warp_deformers.keyform_binding_sources_indices[specific] as usize;
-            let start = warp_deformers.keyform_sources_starts[specific] as usize;
-            let count = warp_deformers.keyform_sources_counts[specific] as usize;
+            let binding_index =
+                read.warp_deformer_keyform_binding_sources_indices()[specific] as usize;
+            let start = read.warp_deformer_keyform_sources_starts()[specific] as usize;
+            let count = read.warp_deformer_keyform_sources_counts()[specific] as usize;
 
             let mut positions_to_bind = Vec::new();
             for i in start..start + count {
                 let position_start =
-                    warp_deformer_keyforms.keyform_position_sources_starts[i] as usize / 2;
+                    read.warp_deformer_keyform_position_sources_starts()[i] as usize / 2;
                 positions_to_bind
                     .push(positions[position_start..position_start + vertexes].to_owned());
             }
-            let opacities_to_bind = warp_deformer_keyforms.opacities[start..start + count].to_vec();
+            let opacities_to_bind =
+                read.warp_deformer_keyform_opacities()[start..start + count].to_vec();
             let colors_to_bind =
-                if let Some(warp_deformer_keyforms_v402) = warp_deformer_keyforms_v402 {
-                    let colors_start =
-                        warp_deformer_keyforms_v402.keyform_color_sources_start[specific] as usize;
+                if let Some(color_starts) = read.warp_deformer_keyform_color_sources_start() {
+                    let colors_start = color_starts[specific] as usize;
 
                     collect_colors_to_bind(read, colors_start, count)
                 } else {
                     Vec::new()
                 };
 
-            let parameter_bindings_count =
-                keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-            let parameter_bindings_start: usize =
-                keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+            let parameter_bindings_count = kb_counts[binding_index] as usize;
+            let parameter_bindings_start: usize = kb_starts[binding_index] as usize;
 
             applicators.push(ParamApplicator {
-                kind_index: deformers.specific_sources_indices[i],
+                kind_index: read.deformer_specific_sources_indices()[i],
                 values: ApplicatorKind::WarpDeformer(
                     positions_to_bind,
                     opacities_to_bind,
@@ -558,15 +546,15 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 ),
                 blend: None,
             });
-        } else if deformers.types[i] == 1 {
-            let base_angle = rotation_deformers.base_angles[specific];
+        } else if read.deformer_types()[i] == 1 {
+            let base_angle = read.rotation_deformer_base_angles()[specific];
 
             {
                 let node_to_append = DeformerNode {
-                    id: deformers.ids[i].name.to_string(),
+                    id: read.deformer_ids()[i].name().to_string(),
                     broad_index: i as u32,
-                    parent_part_index: deformers.parent_part_indices[i],
-                    is_enabled: deformers.is_enabled[i] != 0,
+                    parent_part_index: read.deformer_parent_part_indices()[i],
+                    is_enabled: read.deformer_is_enabled()[i] != 0,
                     data: node::NodeKind::RotationDeformer(
                         RotationDeformerData { base_angle },
                         specific as u32,
@@ -587,16 +575,16 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             }
 
             let binding_index =
-                rotation_deformers.keyform_binding_sources_indices[specific] as usize;
-            let start = rotation_deformers.keyform_sources_starts[specific] as usize;
-            let count = rotation_deformers.keyform_sources_counts[specific] as usize;
+                read.rotation_deformer_keyform_binding_sources_indices()[specific] as usize;
+            let start = read.rotation_deformer_keyform_sources_starts()[specific] as usize;
+            let count = read.rotation_deformer_keyform_sources_counts()[specific] as usize;
 
             let mut positions_to_bind = Vec::new();
             for i in start..start + count {
-                let x_origin = rotation_deformer_keyforms.x_origin[i];
-                let y_origin = rotation_deformer_keyforms.y_origin[i];
-                let scale = rotation_deformer_keyforms.scales[i];
-                let angle = rotation_deformer_keyforms.angles[i];
+                let x_origin = read.rotation_deformer_keyform_x_origin()[i];
+                let y_origin = read.rotation_deformer_keyform_y_origin()[i];
+                let scale = read.rotation_deformer_keyform_scales()[i];
+                let angle = read.rotation_deformer_keyform_angles()[i];
                 positions_to_bind.push(TransformData {
                     origin: vec2(x_origin, y_origin),
                     scale,
@@ -604,24 +592,21 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
                 });
             }
             let opacities_to_bind =
-                rotation_deformer_keyforms.opacities[start..start + count].to_vec();
+                read.rotation_deformer_keyform_opacities()[start..start + count].to_vec();
             let colors_to_bind =
-                if let Some(rotation_deformer_keyforms_v402) = rotation_deformer_keyforms_v402 {
-                    let colors_start = rotation_deformer_keyforms_v402.keyform_color_sources_start
-                        [specific] as usize;
+                if let Some(color_starts) = read.rotation_deformer_keyform_color_sources_start() {
+                    let colors_start = color_starts[specific] as usize;
 
                     collect_colors_to_bind(read, colors_start, count)
                 } else {
                     Vec::new()
                 };
 
-            let parameter_bindings_count =
-                keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-            let parameter_bindings_start: usize =
-                keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+            let parameter_bindings_count = kb_counts[binding_index] as usize;
+            let parameter_bindings_start: usize = kb_starts[binding_index] as usize;
 
             applicators.push(ParamApplicator {
-                kind_index: deformers.specific_sources_indices[i],
+                kind_index: read.deformer_specific_sources_indices()[i],
                 values: ApplicatorKind::RotationDeformer(
                     positions_to_bind,
                     opacities_to_bind,
@@ -640,44 +625,41 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
     let uvs = read.uvs();
     let vertex_indices = read.vertex_indices();
-    let mut art_mesh_uvs = Vec::with_capacity(read.table.count_info.art_meshes as usize);
-    let mut art_mesh_indices = Vec::with_capacity(read.table.count_info.art_meshes as usize);
-    let mut art_mesh_mask_indices = Vec::with_capacity(read.table.count_info.art_meshes as usize);
+    let mut art_mesh_uvs = Vec::with_capacity(read.counts().art_meshes() as usize);
+    let mut art_mesh_indices = Vec::with_capacity(read.counts().art_meshes() as usize);
+    let mut art_mesh_mask_indices = Vec::with_capacity(read.counts().art_meshes() as usize);
 
-    let art_mesh_keyforms = &read.table.art_mesh_keyforms;
-    let art_mesh_deformer_keyforms_v402 = read.table.art_mesh_deformer_keyforms_v402.as_ref();
-    let art_mesh_masks = &read.table.art_mesh_masks;
-
-    for i in 0..read.table.count_info.art_meshes {
+    for i in 0..read.counts().art_meshes() {
         let i = i as usize;
-        let uv_start = art_meshes.uv_sources_starts[i] as usize / 2;
-        let vertexes = art_meshes.vertex_counts[i] as usize;
-        let index_start = art_meshes.vertex_index_sources_starts[i] as usize;
-        let index_count = art_meshes.vertex_index_sources_counts[i] as usize;
+        let uv_start = read.art_mesh_uv_sources_starts()[i] as usize / 2;
+        let vertexes = read.art_mesh_vertex_counts()[i] as usize;
+        let index_start = read.art_mesh_vertex_index_sources_starts()[i] as usize;
+        let index_count = read.art_mesh_vertex_index_sources_counts()[i] as usize;
         art_mesh_uvs.push(uvs[uv_start..uv_start + vertexes].to_vec());
         art_mesh_indices.push(vertex_indices[index_start..index_start + index_count].to_vec());
 
-        let mask_start = art_meshes.art_mesh_mask_sources_starts[i] as usize;
-        let mask_count = art_meshes.art_mesh_mask_sources_counts[i] as usize;
+        let mask_start = read.art_mesh_mask_sources_starts()[i] as usize;
+        let mask_count = read.art_mesh_mask_sources_counts()[i] as usize;
         art_mesh_mask_indices.push(
-            art_mesh_masks.art_mesh_source_indices[mask_start..mask_start + mask_count].to_owned(),
+            read.art_mesh_mask_source_indices()[mask_start..mask_start + mask_count].to_owned(),
         );
 
-        let binding_index = art_meshes.keyform_binding_sources_indices[i] as usize;
-        let start = art_meshes.keyform_sources_starts[i] as usize;
-        let count = art_meshes.keyform_sources_counts[i] as usize;
+        let binding_index = read.art_mesh_keyform_binding_sources_indices()[i] as usize;
+        let start = read.art_mesh_keyform_sources_starts()[i] as usize;
+        let count = read.art_mesh_keyform_sources_counts()[i] as usize;
 
         let mut positions_to_bind = Vec::new();
         for i in start..start + count {
-            let position_start = art_mesh_keyforms.keyform_position_sources_starts[i] as usize / 2;
+            let position_start =
+                read.art_mesh_keyform_position_sources_starts()[i] as usize / 2;
             positions_to_bind.push(positions[position_start..position_start + vertexes].to_owned());
         }
-        let opacities_to_bind = art_mesh_keyforms.opacities[start..start + count].to_vec();
-        let draw_orders_to_bind = art_mesh_keyforms.draw_orders[start..start + count].to_vec();
+        let opacities_to_bind = read.art_mesh_keyform_opacities()[start..start + count].to_vec();
+        let draw_orders_to_bind =
+            read.art_mesh_keyform_draw_orders()[start..start + count].to_vec();
         let colors_to_bind =
-            if let Some(art_mesh_deformer_keyforms_v402) = art_mesh_deformer_keyforms_v402 {
-                let colors_start =
-                    art_mesh_deformer_keyforms_v402.keyform_color_sources_start[i] as usize;
+            if let Some(color_starts) = read.art_mesh_keyform_color_sources_start() {
+                let colors_start = color_starts[i] as usize;
 
                 collect_colors_to_bind(read, colors_start, count)
             } else {
@@ -685,13 +667,13 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             };
 
         {
-            let parent_deformer_index = art_meshes.parent_deformer_indices[i];
+            let parent_deformer_index = read.art_mesh_parent_deformer_indices()[i];
 
             let node_to_append = DeformerNode {
-                id: art_meshes.ids[i].name.to_string(),
+                id: read.art_mesh_ids()[i].name().to_string(),
                 broad_index: i as u32,
-                parent_part_index: art_meshes.parent_part_indices[i],
-                is_enabled: art_meshes.is_enabled[i] != 0,
+                parent_part_index: read.art_mesh_parent_part_indices()[i],
+                is_enabled: read.art_mesh_is_enabled()[i] != 0,
                 data: node::NodeKind::ArtMesh(ArtMeshData {
                     vertexes: vertexes as u32,
                 }),
@@ -707,10 +689,8 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             };
         }
 
-        let parameter_bindings_count =
-            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-        let parameter_bindings_start =
-            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+        let parameter_bindings_count = kb_counts[binding_index] as usize;
+        let parameter_bindings_start = kb_starts[binding_index] as usize;
 
         applicators.push(ParamApplicator {
             kind_index: i as u32,
@@ -732,84 +712,36 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
 
     let mut glue_nodes = Vec::new();
 
-    let glues = &read.table.glues;
-    let glue_infos = &read.table.glue_infos;
-    let glue_keyforms = &read.table.glue_keyforms;
-    for i in 0..read.table.count_info.glues {
+    for i in 0..read.counts().glues() {
         let i = i as usize;
 
-        let glue_info_start = glues.glue_info_sources_starts[i] as usize;
-        let glue_info_count = glues.glue_info_sources_counts[i] as usize;
+        let glue_info_start = read.glue_info_sources_starts()[i] as usize;
+        let glue_info_count = read.glue_info_sources_counts()[i] as usize;
 
-        let binding_index = glues.keyform_binding_sources_indices[i] as usize;
-        let start = glues.keyform_sources_starts[i] as usize;
-        let count = glues.keyform_sources_counts[i] as usize;
+        let binding_index = read.glue_keyform_binding_sources_indices()[i] as usize;
+        let start = read.glue_keyform_sources_starts()[i] as usize;
+        let count = read.glue_keyform_sources_counts()[i] as usize;
 
-        let mesh_indices =
-            &glue_infos.vertex_indices[glue_info_start..glue_info_start + glue_info_count];
-        let weights = &glue_infos.weights[glue_info_start..glue_info_start + glue_info_count];
+        let mesh_indices = &read.glue_info_vertex_indices()
+            [glue_info_start..glue_info_start + glue_info_count];
+        let weights =
+            &read.glue_info_weights()[glue_info_start..glue_info_start + glue_info_count];
 
-        let intensities_to_bind = glue_keyforms.intensities[start..start + count].to_vec();
+        let intensities_to_bind = read.glue_keyform_intensities()[start..start + count].to_vec();
 
         glue_nodes.push(GlueNode {
-            id: glues.ids[i].name.to_string(),
+            id: read.glue_ids()[i].name().to_string(),
             kind_index: i as u32,
-            art_mesh_index: [glues.art_mesh_indices_a[i], glues.art_mesh_indices_b[i]],
+            art_mesh_index: [
+                read.glue_art_mesh_indices_a()[i],
+                read.glue_art_mesh_indices_b()[i],
+            ],
             mesh_indices: mesh_indices.to_vec(),
             weights: weights.to_vec(),
         });
 
-        let parameter_bindings_count =
-            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-        let parameter_bindings_start =
-            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
-
-        applicators.push(ParamApplicator {
-            kind_index: i as u32,
-            values: ApplicatorKind::Glue(intensities_to_bind),
-            data: collect_parameter_bindings(
-                read,
-                &parameter_bindings_to_parameter,
-                parameter_bindings_start,
-                parameter_bindings_count,
-            ),
-            blend: None,
-        });
-    }
-
-    let mut glue_nodes = Vec::new();
-
-    let glues = &read.table.glues;
-    let glue_infos = &read.table.glue_infos;
-    let glue_keyforms = &read.table.glue_keyforms;
-    for i in 0..read.table.count_info.glues {
-        let i = i as usize;
-
-        let glue_info_start = glues.glue_info_sources_starts[i] as usize;
-        let glue_info_count = glues.glue_info_sources_counts[i] as usize;
-
-        let binding_index = glues.keyform_binding_sources_indices[i] as usize;
-        let start = glues.keyform_sources_starts[i] as usize;
-        let count = glues.keyform_sources_counts[i] as usize;
-
-        let mesh_indices =
-            &glue_infos.vertex_indices[glue_info_start..glue_info_start + glue_info_count];
-        let weights = &glue_infos.weights[glue_info_start..glue_info_start + glue_info_count];
-
-        let intensities_to_bind = glue_keyforms.intensities[start..start + count].to_vec();
-
-        glue_nodes.push(GlueNode {
-            id: glues.ids[i].name.to_string(),
-            kind_index: i as u32,
-            art_mesh_index: [glues.art_mesh_indices_a[i], glues.art_mesh_indices_b[i]],
-            mesh_indices: mesh_indices.to_vec(),
-            weights: weights.to_vec(),
-        });
-
-        let parameter_bindings_count =
-            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-        let parameter_bindings_start =
-            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+        let parameter_bindings_count = kb_counts[binding_index] as usize;
+        let parameter_bindings_start = kb_starts[binding_index] as usize;
 
         applicators.push(ParamApplicator {
             kind_index: i as u32,
@@ -825,31 +757,28 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     }
 
     let mut part_roots: Vec<NodeId> = Vec::new();
-    let mut part_arena = Arena::<PartNode>::with_capacity(read.table.count_info.parts as usize);
+    let mut part_arena = Arena::<PartNode>::with_capacity(read.counts().parts() as usize);
 
     let mut part_indices_to_node_ids: Vec<Option<NodeId>> =
-        vec![None; read.table.count_info.parts as usize];
+        vec![None; read.counts().parts() as usize];
 
-    let part_data = &read.table.parts;
-    let part_keyforms = &read.table.part_keyforms;
-
-    for i in 0..read.table.count_info.parts {
+    for i in 0..read.counts().parts() {
         let i = i as usize;
 
-        let binding_index = part_data.keyform_binding_sources_indices[i] as usize;
-        let start = part_data.keyform_sources_starts[i] as usize;
-        let count = part_data.keyform_sources_counts[i] as usize;
+        let binding_index = read.part_keyform_binding_sources_indices()[i] as usize;
+        let start = read.part_keyform_sources_starts()[i] as usize;
+        let count = read.part_keyform_sources_counts()[i] as usize;
 
-        let draw_orders_to_bind = part_keyforms.draw_orders[start..start + count].to_vec();
+        let draw_orders_to_bind = read.part_keyform_draw_orders()[start..start + count].to_vec();
 
         {
-            let parent_part_index = part_data.parent_part_indices[i];
+            let parent_part_index = read.part_parent_part_indices()[i];
 
             let node_to_append = PartNode {
-                id: part_data.ids[i].name.to_string(),
+                id: read.part_ids()[i].name().to_string(),
                 kind_index: i as u32,
-                is_enabled: part_data.is_enabled[i] != 0,
-                is_visible: part_data.is_visible[i] != 0,
+                is_enabled: read.part_is_enabled()[i] != 0,
+                is_visible: read.part_is_visible()[i] != 0,
             };
 
             let res = if parent_part_index != -1 {
@@ -865,10 +794,8 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
             part_indices_to_node_ids[i] = Some(res);
         }
 
-        let parameter_bindings_count =
-            keyform_bindings.parameter_binding_index_sources_counts[binding_index] as usize;
-        let parameter_bindings_start =
-            keyform_bindings.parameter_binding_index_sources_starts[binding_index] as usize;
+        let parameter_bindings_count = kb_counts[binding_index] as usize;
+        let parameter_bindings_start = kb_starts[binding_index] as usize;
 
         applicators.push(ParamApplicator {
             kind_index: i as u32,
@@ -895,40 +822,38 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     // same draw order by breaking ties via tree position.
 
     // TODO: something like this for parts
-    let draw_order_groups = &read.table.draw_order_groups;
-    let draw_order_group_objects = &read.table.draw_order_group_objects;
-
     let mut draw_order_nodes = Arena::<DrawOrderNode>::with_capacity(
-        read.table.count_info.draw_order_group_objects as usize,
+        read.counts().draw_order_group_objects() as usize,
     );
 
     let mut draw_order_indices_to_node_ids: Vec<Option<NodeId>> =
-        vec![None; read.table.count_info.draw_order_groups as usize];
+        vec![None; read.counts().draw_order_groups() as usize];
 
     draw_order_indices_to_node_ids[0] =
         Some(draw_order_nodes.new_node(DrawOrderNode::Part { index: u32::MAX }));
 
-    for i in 0..read.table.count_info.draw_order_groups {
+    for i in 0..read.counts().draw_order_groups() {
         let i = i as usize;
 
-        let object_sources_start = draw_order_groups.object_sources_starts[i];
-        let object_sources_count = draw_order_groups.object_sources_counts[i];
+        let object_sources_start = read.draw_order_group_object_sources_starts()[i];
+        let object_sources_count = read.draw_order_group_object_sources_counts()[i];
 
         for a in object_sources_start..(object_sources_start + object_sources_count) {
             let a = a as usize;
 
-            let type_index = draw_order_group_objects.indices[a];
-            let to_append =
-                if draw_order_group_objects.types[a] == DrawOrderGroupObjectType::ArtMesh {
-                    DrawOrderNode::ArtMesh { index: type_index }
-                } else {
-                    DrawOrderNode::Part { index: type_index }
-                };
+            let type_index = read.draw_order_group_object_indices()[a];
+            let to_append = if read.draw_order_group_object_types()[a]
+                == DrawOrderGroupObjectType::ArtMesh as u32
+            {
+                DrawOrderNode::ArtMesh { index: type_index }
+            } else {
+                DrawOrderNode::Part { index: type_index }
+            };
 
             let res = draw_order_indices_to_node_ids[i]
                 .unwrap()
                 .append_value(to_append, &mut draw_order_nodes);
-            let self_index = draw_order_group_objects.self_indices[a];
+            let self_index = read.draw_order_group_object_self_indices()[a];
             if self_index != -1 {
                 draw_order_indices_to_node_ids[self_index as usize] = Some(res);
             }
@@ -940,11 +865,11 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
     // in the future.
 
     let mut warp_deformer_grid_count = Vec::new();
-    for i in 0..read.table.count_info.warp_deformers as usize {
+    for i in 0..read.counts().warp_deformers() as usize {
         // Fencepost error warning: rows and columns measure the user-visbile middle, not the edges
         // containg the numbers.
         warp_deformer_grid_count
-            .push((warp_deformers.rows[i] + 1) * (warp_deformers.columns[i] + 1));
+            .push((read.warp_deformer_rows()[i] + 1) * (read.warp_deformer_columns()[i] + 1));
     }
 
     let params = collect_param_data(read);
@@ -961,20 +886,24 @@ pub fn puppet_from_moc3(read: &Moc3Data) -> Puppet {
         params,
         applicators,
 
-        art_mesh_count: read.table.count_info.art_meshes,
-        warp_deformer_count: read.table.count_info.warp_deformers,
-        rotation_deformer_count: read.table.count_info.rotation_deformers,
-        part_count: read.table.count_info.parts,
-        glue_count: read.table.count_info.glues,
+        art_mesh_count: read.counts().art_meshes(),
+        warp_deformer_count: read.counts().warp_deformers(),
+        rotation_deformer_count: read.counts().rotation_deformers(),
+        part_count: read.counts().parts(),
+        glue_count: read.counts().glues(),
 
         warp_deformer_grid_count,
 
         art_mesh_uvs,
         art_mesh_indices,
-        art_mesh_textures: read.table.art_meshes.texture_nums.clone(),
-        art_mesh_flags: read.table.art_meshes.art_mesh_flags.clone(),
+        art_mesh_textures: read.art_mesh_texture_nums().to_vec(),
+        art_mesh_flags: read
+            .art_mesh_flags()
+            .iter()
+            .map(|&b| ArtMeshFlags::from_bytes([b]).unwrap())
+            .collect(),
         art_mesh_mask_indices,
-        art_mesh_vertexes: read.table.art_meshes.vertex_counts.clone(),
+        art_mesh_vertexes: read.art_mesh_vertex_counts().to_vec(),
 
         draw_order_nodes,
         draw_order_root: draw_order_indices_to_node_ids[0].unwrap(),

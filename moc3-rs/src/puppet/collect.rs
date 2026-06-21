@@ -3,38 +3,35 @@ use glam::vec3;
 use super::{applicator::BlendShapeConstraints, BlendColor, ParamData};
 
 use crate::{
-    data::{Moc3Data, ParameterType, Version},
+    data::{Moc3, ParameterType, Version},
     puppet::applicator::{ApplicatorKind, ParamApplicator},
 };
 
 pub fn collect_blend_shape_constraints(
-    read: &Moc3Data,
+    read: Moc3<'_>,
     constraint_index_start: usize,
     constraint_index_count: usize,
 ) -> Vec<BlendShapeConstraints> {
-    let blend_shape_constraints = read.table.blend_shape_constraints.as_ref().unwrap();
-    let blend_shape_constraint_indices =
-        read.table.blend_shape_constraint_indices.as_ref().unwrap();
-    let blend_shape_constraint_values = read.table.blend_shape_constraint_values.as_ref().unwrap();
+    let constraint_indices = read.blend_shape_constraint_sources_indices().unwrap();
+    let parameter_indices = read.blend_shape_constraint_parameter_indices().unwrap();
+    let value_starts = read.blend_shape_constraint_value_sources_starts().unwrap();
+    let value_counts = read.blend_shape_constraint_value_sources_counts().unwrap();
+    let value_keys = read.blend_shape_constraint_value_keys().unwrap();
+    let value_weights = read.blend_shape_constraint_value_weights().unwrap();
 
     let mut ret = Vec::new();
 
     for i in constraint_index_start..constraint_index_start + constraint_index_count {
-        let index =
-            blend_shape_constraint_indices.blend_shape_constraint_sources_indices[i] as usize;
+        let index = constraint_indices[i] as usize;
 
-        let parameter_index = blend_shape_constraints.parameter_indices[index] as usize;
-        let value_start =
-            blend_shape_constraints.blend_shape_constraint_value_sources_starts[index] as usize;
-        let value_count =
-            blend_shape_constraints.blend_shape_constraint_value_sources_counts[index] as usize;
+        let parameter_index = parameter_indices[index] as usize;
+        let value_start = value_starts[index] as usize;
+        let value_count = value_counts[index] as usize;
 
         ret.push(BlendShapeConstraints {
             parameter_index,
-            keys: blend_shape_constraint_values.keys[value_start..value_start + value_count]
-                .to_owned(),
-            weights: blend_shape_constraint_values.weights[value_start..value_start + value_count]
-                .to_owned(),
+            keys: value_keys[value_start..value_start + value_count].to_owned(),
+            weights: value_weights[value_start..value_start + value_count].to_owned(),
         })
     }
 
@@ -42,66 +39,82 @@ pub fn collect_blend_shape_constraints(
 }
 
 pub fn collect_blend_shapes(
-    read: &Moc3Data,
+    read: Moc3<'_>,
     blend_shape_parameter_bindings_to_parameter: &[usize],
     applicators: &mut Vec<ParamApplicator>,
 ) {
-    if read.header.version < Version::V4_02 {
+    if read.version() < Version::V4_02 {
         return;
     }
 
     let positions = read.positions();
     let keys = read.keys();
 
-    let blend_shape_keyform_bindings = read.table.blend_shape_keyform_bindings.as_ref().unwrap();
-    let blend_shape_parameter_bindings =
-        read.table.blend_shape_parameter_bindings.as_ref().unwrap();
+    let kf_binding_indices = read
+        .blend_shape_keyform_binding_parameter_binding_sources_indices()
+        .unwrap();
+    let kf_binding_starts = read
+        .blend_shape_keyform_binding_keyform_sources_starts()
+        .unwrap();
+    let kf_binding_counts = read
+        .blend_shape_keyform_binding_keyform_sources_counts()
+        .unwrap();
+    let kf_binding_constraint_starts = read
+        .blend_shape_keyform_binding_constraint_index_sources_starts()
+        .unwrap();
+    let kf_binding_constraint_counts = read
+        .blend_shape_keyform_binding_constraint_index_sources_counts()
+        .unwrap();
+
+    let param_binding_key_starts = read
+        .blend_shape_parameter_binding_keys_sources_starts()
+        .unwrap();
+    let param_binding_key_counts = read
+        .blend_shape_parameter_binding_keys_sources_counts()
+        .unwrap();
 
     {
-        let blend_shape_art_meshes = read.table.blend_shape_art_meshes.as_ref().unwrap();
+        let target_indices = read.blend_shape_art_mesh_target_indices().unwrap();
+        let binding_starts = read
+            .blend_shape_art_mesh_keyform_binding_sources_starts()
+            .unwrap();
+        let binding_counts = read
+            .blend_shape_art_mesh_keyform_binding_sources_counts()
+            .unwrap();
 
-        let art_meshes = &read.table.art_meshes;
-        let art_mesh_keyforms = &read.table.art_mesh_keyforms;
+        let vertex_counts = read.art_mesh_vertex_counts();
+        let position_starts = read.art_mesh_keyform_position_sources_starts();
+        let opacities = read.art_mesh_keyform_opacities();
+        let draw_orders = read.art_mesh_keyform_draw_orders();
 
-        for i in 0..read.table.count_info.blend_shape_art_meshes {
+        for i in 0..read.counts().blend_shape_art_meshes() {
             let i = i as usize;
 
-            let target_index = blend_shape_art_meshes.target_indices[i] as usize;
-            let vertexes = art_meshes.vertex_counts[target_index] as usize;
-            let start =
-                blend_shape_art_meshes.blend_shape_keyform_binding_sources_starts[i] as usize;
-            let count: usize =
-                blend_shape_art_meshes.blend_shape_keyform_binding_sources_counts[i] as usize;
+            let target_index = target_indices[i] as usize;
+            let vertexes = vertex_counts[target_index] as usize;
+            let start = binding_starts[i] as usize;
+            let count: usize = binding_counts[i] as usize;
 
             for a in start..start + count {
-                let param_binding_index = blend_shape_keyform_bindings
-                    .blend_shape_parameter_binding_sources_indices[a]
-                    as usize;
-                let keyform_start =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_starts[a] as usize;
-                let keyform_count =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_counts[a] as usize;
+                let param_binding_index = kf_binding_indices[a] as usize;
+                let keyform_start = kf_binding_starts[a] as usize;
+                let keyform_count = kf_binding_counts[a] as usize;
 
                 let mut positions_to_bind = Vec::new();
                 for keyform in keyform_start..keyform_start + keyform_count {
-                    let position_start =
-                        art_mesh_keyforms.keyform_position_sources_starts[keyform] as usize / 2;
+                    let position_start = position_starts[keyform] as usize / 2;
                     positions_to_bind
                         .push(positions[position_start..position_start + vertexes].to_owned());
                 }
 
-                let opacities_to_bind = art_mesh_keyforms.opacities
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
-                let draw_orders_to_bind = art_mesh_keyforms.draw_orders
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
+                let opacities_to_bind =
+                    opacities[keyform_start..keyform_start + keyform_count].to_vec();
+                let draw_orders_to_bind =
+                    draw_orders[keyform_start..keyform_start + keyform_count].to_vec();
 
                 let x = {
-                    let key_starts = blend_shape_parameter_bindings.keys_sources_starts
-                        [param_binding_index] as usize;
-                    let key_counts = blend_shape_parameter_bindings.keys_sources_counts
-                        [param_binding_index] as usize;
+                    let key_starts = param_binding_key_starts[param_binding_index] as usize;
+                    let key_counts = param_binding_key_counts[param_binding_index] as usize;
 
                     (
                         keys[key_starts..key_starts + key_counts].to_owned(),
@@ -109,12 +122,8 @@ pub fn collect_blend_shapes(
                     )
                 };
 
-                let constraint_index_start = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_starts[a]
-                    as usize;
-                let constraint_index_count = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_counts[a]
-                    as usize;
+                let constraint_index_start = kf_binding_constraint_starts[a] as usize;
+                let constraint_index_count = kf_binding_constraint_counts[a] as usize;
 
                 applicators.push(ParamApplicator {
                     kind_index: target_index as u32,
@@ -136,48 +145,44 @@ pub fn collect_blend_shapes(
     }
 
     {
-        let blend_shape_warp_deformers = read.table.blend_shape_warp_deformers.as_ref().unwrap();
+        let target_indices = read.blend_shape_warp_deformer_target_indices().unwrap();
+        let binding_starts = read
+            .blend_shape_warp_deformer_keyform_binding_sources_starts()
+            .unwrap();
+        let binding_counts = read
+            .blend_shape_warp_deformer_keyform_binding_sources_counts()
+            .unwrap();
 
-        let warp_deformers = &read.table.warp_deformers;
-        let warp_deformer_keyforms = &read.table.warp_deformer_keyforms;
+        let vertex_counts = read.warp_deformer_vertex_counts();
+        let position_starts = read.warp_deformer_keyform_position_sources_starts();
+        let opacities = read.warp_deformer_keyform_opacities();
 
-        for i in 0..read.table.count_info.blend_shape_warp_deformers {
+        for i in 0..read.counts().blend_shape_warp_deformers() {
             let i = i as usize;
 
-            let target_index = blend_shape_warp_deformers.target_indices[i] as usize;
-            let vertexes = warp_deformers.vertex_counts[target_index] as usize;
-            let start =
-                blend_shape_warp_deformers.blend_shape_keyform_binding_sources_starts[i] as usize;
-            let count =
-                blend_shape_warp_deformers.blend_shape_keyform_binding_sources_counts[i] as usize;
+            let target_index = target_indices[i] as usize;
+            let vertexes = vertex_counts[target_index] as usize;
+            let start = binding_starts[i] as usize;
+            let count = binding_counts[i] as usize;
 
             for a in start..start + count {
-                let param_binding_index = blend_shape_keyform_bindings
-                    .blend_shape_parameter_binding_sources_indices[a]
-                    as usize;
-                let keyform_start =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_starts[a] as usize;
-                let keyform_count =
-                    blend_shape_keyform_bindings.keyform_sources_blend_shape_counts[a] as usize;
+                let param_binding_index = kf_binding_indices[a] as usize;
+                let keyform_start = kf_binding_starts[a] as usize;
+                let keyform_count = kf_binding_counts[a] as usize;
 
                 let mut positions_to_bind = Vec::new();
                 for keyform in keyform_start..keyform_start + keyform_count {
-                    let position_start = warp_deformer_keyforms.keyform_position_sources_starts
-                        [keyform] as usize
-                        / 2;
+                    let position_start = position_starts[keyform] as usize / 2;
                     positions_to_bind
                         .push(positions[position_start..position_start + vertexes].to_owned());
                 }
 
-                let opacities_to_bind = warp_deformer_keyforms.opacities
-                    [keyform_start..keyform_start + keyform_count]
-                    .to_vec();
+                let opacities_to_bind =
+                    opacities[keyform_start..keyform_start + keyform_count].to_vec();
 
                 let x = {
-                    let key_starts = blend_shape_parameter_bindings.keys_sources_starts
-                        [param_binding_index] as usize;
-                    let key_counts = blend_shape_parameter_bindings.keys_sources_counts
-                        [param_binding_index] as usize;
+                    let key_starts = param_binding_key_starts[param_binding_index] as usize;
+                    let key_counts = param_binding_key_counts[param_binding_index] as usize;
 
                     (
                         keys[key_starts..key_starts + key_counts].to_owned(),
@@ -185,12 +190,8 @@ pub fn collect_blend_shapes(
                     )
                 };
 
-                let constraint_index_start = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_starts[a]
-                    as usize;
-                let constraint_index_count = blend_shape_keyform_bindings
-                    .blend_shape_constraint_index_sources_counts[a]
-                    as usize;
+                let constraint_index_start = kf_binding_constraint_starts[a] as usize;
+                let constraint_index_count = kf_binding_constraint_counts[a] as usize;
 
                 applicators.push(ParamApplicator {
                     kind_index: target_index as u32,
@@ -212,27 +213,22 @@ pub fn collect_blend_shapes(
 }
 
 pub fn collect_colors_to_bind(
-    read: &Moc3Data,
+    read: Moc3<'_>,
     colors_start: usize,
     count: usize,
 ) -> Vec<BlendColor> {
-    let keyform_multiply_colors = read.table.keyform_multiply_colors.as_ref().unwrap();
-    let keyform_screen_colors = read.table.keyform_screen_colors.as_ref().unwrap();
+    let multiply_red = read.keyform_multiply_colors_red().unwrap();
+    let multiply_green = read.keyform_multiply_colors_green().unwrap();
+    let multiply_blue = read.keyform_multiply_colors_blue().unwrap();
+    let screen_red = read.keyform_screen_colors_red().unwrap();
+    let screen_green = read.keyform_screen_colors_green().unwrap();
+    let screen_blue = read.keyform_screen_colors_blue().unwrap();
 
     let mut ret = Vec::with_capacity(count);
 
     for i in colors_start..colors_start + count {
-        let multiply_color = vec3(
-            keyform_multiply_colors.red[i],
-            keyform_multiply_colors.green[i],
-            keyform_multiply_colors.blue[i],
-        );
-
-        let screen_color = vec3(
-            keyform_screen_colors.red[i],
-            keyform_screen_colors.green[i],
-            keyform_screen_colors.blue[i],
-        );
+        let multiply_color = vec3(multiply_red[i], multiply_green[i], multiply_blue[i]);
+        let screen_color = vec3(screen_red[i], screen_green[i], screen_blue[i]);
         ret.push(BlendColor {
             multiply_color,
             screen_color,
@@ -242,21 +238,22 @@ pub fn collect_colors_to_bind(
 }
 
 pub fn collect_parameter_bindings(
-    read: &Moc3Data,
+    read: Moc3<'_>,
     parameter_bindings_to_parameter: &[usize],
     parameter_bindings_start: usize,
     parameter_bindings_count: usize,
 ) -> Vec<(Vec<f32>, usize)> {
-    let parameter_bindings = &read.table.parameter_bindings;
-    let parameter_binding_indices = &read.table.parameter_binding_indices;
+    let key_starts = read.parameter_binding_keys_sources_starts();
+    let key_counts = read.parameter_binding_keys_sources_counts();
+    let binding_indices = read.parameter_binding_indices();
     let keys = read.keys();
 
     let mut ret = Vec::new();
 
     for i in parameter_bindings_start..parameter_bindings_start + parameter_bindings_count {
-        let ind = parameter_binding_indices.binding_sources_indices[i] as usize;
-        let key_starts = parameter_bindings.keys_sources_starts[ind] as usize;
-        let key_counts = parameter_bindings.keys_sources_counts[ind] as usize;
+        let ind = binding_indices[i] as usize;
+        let key_starts = key_starts[ind] as usize;
+        let key_counts = key_counts[ind] as usize;
 
         ret.push((
             keys[key_starts..key_starts + key_counts].to_owned(),
@@ -267,24 +264,27 @@ pub fn collect_parameter_bindings(
     ret
 }
 
-pub fn collect_param_data(read: &Moc3Data) -> ParamData {
-    let param_count = read.table.count_info.parameters;
-    let parameters = &read.table.parameters;
+pub fn collect_param_data(read: Moc3<'_>) -> ParamData {
+    let param_count = read.counts().parameters();
 
     let mut param_ids = Vec::new();
-    for i in parameters.ids.iter() {
-        param_ids.push(i.name.to_string());
+    for i in read.parameter_ids().iter() {
+        param_ids.push(i.name().to_string());
     }
 
     let mut param_repeats = Vec::new();
-    for i in parameters.is_repeat.iter() {
+    for i in read.parameter_is_repeat().iter() {
         param_repeats.push(*i == 1);
     }
 
     let mut param_types = Vec::new();
-    if let Some(parameters_v402) = &read.table.parameters_v402 {
-        for i in parameters_v402.parameter_types.iter() {
-            param_types.push(*i);
+    if let Some(parameter_types) = read.parameter_types() {
+        for &t in parameter_types {
+            param_types.push(if t == ParameterType::BlendShape as u32 {
+                ParameterType::BlendShape
+            } else {
+                ParameterType::Normal
+            });
         }
     } else {
         for _ in 0..param_count {
@@ -295,11 +295,11 @@ pub fn collect_param_data(read: &Moc3Data) -> ParamData {
     ParamData {
         count: param_count,
         ids: param_ids,
-        defaults: parameters.default_values.clone(),
-        maxes: parameters.max_values.clone(),
-        mins: parameters.min_values.clone(),
+        defaults: read.parameter_default_values().to_vec(),
+        maxes: read.parameter_max_values().to_vec(),
+        mins: read.parameter_min_values().to_vec(),
         repeats: param_repeats,
-        decimals: parameters.decimal_places.clone(),
+        decimals: read.parameter_decimal_places().to_vec(),
         types: param_types,
     }
 }

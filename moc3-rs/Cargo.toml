@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-binrw = { workspace = true }
 bytemuck = { workspace = true, features = ["extern_crate_alloc", "derive"] }
 glam = { workspace = true, features = ["bytemuck"] }
 indextree = "4.7.4"
 modular-bitfield = "0.11.2"
 thiserror = "2.0.16"
+yoke = { version = "0.7", features = ["derive"] }

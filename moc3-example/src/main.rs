@@ -1,15 +1,14 @@
-use binrw::BinReaderExt;
 use image::RgbaImage;
 use moc3_data::physics::Physics3Data;
 use moc3_impressionism::PhysicsSystem;
 use moc3_rs::{
-    data::Moc3Data,
+    data::Moc3,
     puppet::{Puppet, PuppetFrameData, framedata_for_puppet, puppet_from_moc3},
 };
 use moc3_wgpu::renderer::new_renderer;
 use rand::Rng;
+use std::sync::Arc;
 use std::{fs, time::Instant};
-use std::{io::BufReader, sync::Arc};
 use wgpu::{CompositeAlphaMode, TextureFormat};
 use winit::{
     application::ApplicationHandler,
@@ -20,11 +19,11 @@ use winit::{
 };
 
 fn main() {
-    let f = fs::File::open("a.moc3").unwrap();
-    let mut reader = BufReader::new(f);
-    let read: Moc3Data = reader.read_le().unwrap();
-    let puppet = puppet_from_moc3(&read);
-    drop(read);
+    let puppet = {
+        let bytes = fs::read("a.moc3").unwrap();
+        let read = Moc3::new(&bytes).unwrap();
+        puppet_from_moc3(read)
+    };
 
     let frame_data = framedata_for_puppet(&puppet);
 
