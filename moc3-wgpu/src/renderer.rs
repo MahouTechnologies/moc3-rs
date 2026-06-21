@@ -51,6 +51,7 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         render_size: Extent3d,
+        view_projection: Mat4,
         frame_data: &PuppetFrameData,
     ) {
         if let Some(texture) = &mut self.mask_stencil {
@@ -78,25 +79,10 @@ impl Renderer {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
         }
 
-        // Not quite sure how this works. I think model would move the
-        // model around and view might always be identity?
-        let model = Mat4::IDENTITY;
-        let view = Mat4::IDENTITY;
-
-        // Also rooms by 1.5 and corrects for aspect ratio
-        let aspect = render_size.width as f32 / render_size.height as f32;
-        let (half_w, half_h) = if aspect >= 1.0 {
-            (aspect / 1.5, 1.0 / 1.5)
-        } else {
-            (1.0 / 1.5, 1.0 / (1.5 * aspect))
-        };
-        let projection = Mat4::orthographic_rh(
-            -half_w, half_w, half_h, -half_h, // Live2D Y-down to NDC Y-up
-            -1.0, 1.0,
-        );
-
-        let mvp = projection * view * model;
-        queue.write_buffer(&self.mvp_buffer, 0, bytemuck::bytes_of(&mvp));
+        // The caller supplies the full view-projection matrix (see
+        // `crate::camera::Camera` for a utility that builds one with the
+        // correct coordinate conventions).
+        queue.write_buffer(&self.mvp_buffer, 0, bytemuck::bytes_of(&view_projection));
 
         for i in 0..self.texture_nums.len() {
             let uniform = Uniform {

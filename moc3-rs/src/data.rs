@@ -10,7 +10,7 @@
 //! Only little-endian MOC3 files are supported as a big-endian MOC3 file has
 //! not been seen in the wild.
 
-use std::mem::{align_of, size_of};
+use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable, cast_slice};
 use glam::Vec2;

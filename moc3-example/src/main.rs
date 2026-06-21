@@ -1,3 +1,4 @@
+use glam::Vec2;
 use image::RgbaImage;
 use moc3_data::physics::Physics3Data;
 use moc3_impressionism::PhysicsSystem;
@@ -5,6 +6,7 @@ use moc3_rs::{
     data::Moc3,
     puppet::{Puppet, PuppetFrameData, framedata_for_puppet, puppet_from_moc3},
 };
+use moc3_wgpu::camera::Camera;
 use moc3_wgpu::renderer::new_renderer;
 use rand::Rng;
 use std::sync::Arc;
@@ -228,10 +230,15 @@ impl GfxState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        let render_size = surface_texture.texture.size();
+        let viewport = Vec2::new(render_size.width as f32, render_size.height as f32);
+        let view_projection = state.camera.matrix(viewport);
+
         self.renderer.prepare(
             &self.device,
             &self.queue,
-            surface_texture.texture.size(),
+            render_size,
+            view_projection,
             &state.frame_data,
         );
         let mut encoder = self
@@ -259,6 +266,8 @@ struct AppState {
     physics: PhysicsSystem,
     /// `true` for each parameter index iff it is a physics output destination.
     physics_driven: Vec<bool>,
+    /// Camera used to build the view-projection matrix each frame.
+    camera: Camera,
 }
 
 impl AppState {
@@ -315,6 +324,7 @@ pub fn run(
         textures,
         physics,
         physics_driven,
+        camera: Camera::default(),
     };
 
     let mut app = App::new(state);
