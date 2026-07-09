@@ -7,3 +7,6 @@ edition.workspace = true
 glam = { workspace = true, features = ["bytemuck", "serde"] }
 moc3-rs = { path = "../moc3-rs" }
 serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

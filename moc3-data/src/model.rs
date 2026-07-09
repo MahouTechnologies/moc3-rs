@@ -25,7 +25,8 @@ pub struct FileReferences {
     pub moc: PathBuf,
     pub textures: Vec<PathBuf>,
     pub physics: Option<PathBuf>,
-    pub display_info: PathBuf,
+    #[serde(default)]
+    pub display_info: Option<PathBuf>,
     pub motion_sync: Option<PathBuf>,
     #[serde(default)]
     pub expressions: Vec<Expression>,

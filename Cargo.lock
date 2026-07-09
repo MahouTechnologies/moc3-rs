@@ -2101,6 +2101,7 @@ dependencies = [
  "glam",
  "moc3-rs",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

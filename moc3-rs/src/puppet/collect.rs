@@ -1,6 +1,6 @@
 use glam::vec3;
 
-use super::{applicator::BlendShapeConstraints, BlendColor, ParamData};
+use super::{BlendColor, ParamData, applicator::BlendShapeConstraints};
 
 use crate::{
     data::{Moc3, ParameterType, Version},

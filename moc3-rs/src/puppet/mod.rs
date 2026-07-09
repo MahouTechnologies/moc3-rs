@@ -6,22 +6,14 @@ mod node;
 use std::{mem::discriminant, slice};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{vec2, Vec2, Vec3};
-use indextree::{Arena, NodeId};
-use node::PartNode;
+use glam::{Vec2, Vec3, vec2};
 
 use crate::{
     data::{ArtMeshFlags, DrawOrderGroupObjectType, Moc3, ParameterType},
     deformer::{
         glue::apply_glue,
-        rotation_deformer::{
-            apply_rotation_deformer, calculate_rotation_deformer_angle, TransformData,
-        },
+        rotation_deformer::{apply_rotation_deformer, calculate_rotation_deformer_angle},
         warp_deformer::apply_warp_deformer,
-    },
-    puppet::{
-        applicator::{ApplicatorKind, ParamApplicator},
-        node::{ArtMeshData, RotationDeformerData, WarpDeformerData},
     },
 };
 
@@ -30,8 +22,15 @@ use self::{
         collect_blend_shapes, collect_colors_to_bind, collect_param_data,
         collect_parameter_bindings,
     },
-    draw_order::{draw_order_tree, DrawOrderNode},
-    node::{DeformerNode, GlueNode},
+    draw_order::draw_order_tree,
+};
+
+pub use crate::deformer::rotation_deformer::TransformData;
+pub use applicator::{ApplicatorKind, BlendShapeConstraints, ParamApplicator};
+pub use draw_order::DrawOrderNode;
+pub use indextree::{Arena, NodeId};
+pub use node::{
+    ArtMeshData, DeformerNode, GlueNode, NodeKind, PartNode, RotationDeformerData, WarpDeformerData,
 };
 
 #[derive(Debug, Clone)]
@@ -45,6 +44,31 @@ pub struct ParamData {
     pub repeats: Vec<bool>,
     pub decimals: Vec<u32>,
     pub types: Vec<ParameterType>,
+}
+
+impl ParamData {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        count: u32,
+        ids: Vec<String>,
+        defaults: Vec<f32>,
+        maxes: Vec<f32>,
+        mins: Vec<f32>,
+        repeats: Vec<bool>,
+        decimals: Vec<u32>,
+        types: Vec<ParameterType>,
+    ) -> Self {
+        Self {
+            count,
+            ids,
+            defaults,
+            maxes,
+            mins,
+            repeats,
+            decimals,
+            types,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +101,37 @@ pub struct Puppet {
 
     draw_order_nodes: Arena<DrawOrderNode>,
     draw_order_root: NodeId,
+}
+
+pub struct PuppetParts {
+    pub node_roots: Vec<NodeId>,
+    pub nodes: Arena<DeformerNode>,
+
+    pub glue_nodes: Vec<GlueNode>,
+
+    pub part_roots: Vec<NodeId>,
+    pub parts: Arena<PartNode>,
+
+    pub params: ParamData,
+    pub applicators: Vec<ParamApplicator>,
+
+    pub art_mesh_count: u32,
+    pub warp_deformer_count: u32,
+    pub rotation_deformer_count: u32,
+    pub part_count: u32,
+    pub glue_count: u32,
+
+    pub warp_deformer_grid_count: Vec<u32>,
+
+    pub art_mesh_uvs: Vec<Vec<Vec2>>,
+    pub art_mesh_indices: Vec<Vec<u16>>,
+    pub art_mesh_textures: Vec<u32>,
+    pub art_mesh_flags: Vec<ArtMeshFlags>,
+    pub art_mesh_mask_indices: Vec<Vec<u32>>,
+    pub art_mesh_vertexes: Vec<u32>,
+
+    pub draw_order_nodes: Arena<DrawOrderNode>,
+    pub draw_order_root: NodeId,
 }
 
 #[derive(Pod, Zeroable, Debug, Clone, Copy)]
@@ -139,9 +194,124 @@ pub struct PuppetFrameData {
     glue_data: Vec<f32>,
 }
 
+impl PuppetFrameData {
+    pub fn warp_deformer_grid(&self, warp_specific_index: usize) -> &[Vec2] {
+        &self.warp_deformer_data[warp_specific_index]
+    }
+
+    pub fn rotation_deformer_transform(&self, rotation_specific_index: usize) -> TransformData {
+        self.rotation_deformer_data[rotation_specific_index]
+    }
+
+    /// The accumulated scale a deformer applies to its children - the
+    /// product of the deformer's own scale (1 for warp deformers) with every
+    /// ancestor's.
+    pub fn deformer_scale(&self, broad_index: usize) -> f32 {
+        self.deformer_scale_data[broad_index]
+    }
+
+    /// Applies `deformer`'s current deformation to `points`, given in the
+    /// deformer's local space (for warp deformers, the normalized space
+    /// where `(0,0)..(1,1)` spans the grid).
+    pub fn map_through_deformer(&self, deformer: &DeformerNode, points: &mut [Vec2]) {
+        match &deformer.data {
+            NodeKind::ArtMesh(_) => {}
+            NodeKind::WarpDeformer(data, ind) => {
+                apply_warp_deformer(
+                    &self.warp_deformer_data[*ind as usize],
+                    data.is_new_deformerr,
+                    data.rows as usize,
+                    data.columns as usize,
+                    points,
+                );
+            }
+            NodeKind::RotationDeformer(data, ind) => {
+                let transform_data = self.rotation_deformer_data[*ind as usize]
+                    .with_scale(self.deformer_scale_data[deformer.broad_index as usize]);
+                apply_rotation_deformer(&transform_data, data.base_angle, points);
+            }
+        }
+    }
+}
+
+/// One node in a flattened, depth-first walk of a [`Puppet`] . Roots have `depth` 0.
+pub struct TreeNode<'a, T> {
+    pub depth: usize,
+    pub node: &'a T,
+}
+
+fn walk<'a, T>(arena: &'a Arena<T>, id: NodeId, depth: usize, out: &mut Vec<TreeNode<'a, T>>) {
+    let mut stack = vec![(id, depth)];
+    while let Some((id, depth)) = stack.pop() {
+        out.push(TreeNode {
+            depth,
+            node: arena[id].get(),
+        });
+        // Push in reverse so children are popped (and thus visited) in original order.
+        stack.extend(id.children(arena).rev().map(|child| (child, depth + 1)));
+    }
+}
+
 impl Puppet {
+    /// Assembles a `Puppet` from already-computed parts.
+    pub fn from_parts(parts: PuppetParts) -> Self {
+        Puppet {
+            node_roots: parts.node_roots,
+            nodes: parts.nodes,
+
+            glue_nodes: parts.glue_nodes,
+
+            part_roots: parts.part_roots,
+            parts: parts.parts,
+
+            params: parts.params,
+            applicators: parts.applicators,
+
+            art_mesh_count: parts.art_mesh_count,
+            warp_deformer_count: parts.warp_deformer_count,
+            rotation_deformer_count: parts.rotation_deformer_count,
+            part_count: parts.part_count,
+            glue_count: parts.glue_count,
+
+            warp_deformer_grid_count: parts.warp_deformer_grid_count,
+
+            art_mesh_uvs: parts.art_mesh_uvs,
+            art_mesh_indices: parts.art_mesh_indices,
+            art_mesh_textures: parts.art_mesh_textures,
+            art_mesh_flags: parts.art_mesh_flags,
+            art_mesh_mask_indices: parts.art_mesh_mask_indices,
+            art_mesh_vertexes: parts.art_mesh_vertexes,
+
+            draw_order_nodes: parts.draw_order_nodes,
+            draw_order_root: parts.draw_order_root,
+        }
+    }
+
     pub fn param_data(&self) -> &ParamData {
         &self.params
+    }
+
+    /// Depth-first flattened view of the deformer tree.
+    pub fn deformer_tree(&self) -> Vec<TreeNode<'_, DeformerNode>> {
+        let mut out = Vec::new();
+        for &root in &self.node_roots {
+            walk(&self.nodes, root, 0, &mut out);
+        }
+        out
+    }
+
+    /// Depth-first flattened view of the Parts tree.
+    pub fn part_tree(&self) -> Vec<TreeNode<'_, PartNode>> {
+        let mut out = Vec::new();
+        for &root in &self.part_roots {
+            walk(&self.parts, root, 0, &mut out);
+        }
+        out
+    }
+
+    /// Glue relationships (mesh-to-mesh stitching), not part of either tree.
+    pub fn glues(&self) -> &[GlueNode] {
+        &self.glue_nodes
     }
 
     pub fn update(
@@ -650,21 +820,20 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
 
         let mut positions_to_bind = Vec::new();
         for i in start..start + count {
-            let position_start =
-                read.art_mesh_keyform_position_sources_starts()[i] as usize / 2;
+            let position_start = read.art_mesh_keyform_position_sources_starts()[i] as usize / 2;
             positions_to_bind.push(positions[position_start..position_start + vertexes].to_owned());
         }
         let opacities_to_bind = read.art_mesh_keyform_opacities()[start..start + count].to_vec();
         let draw_orders_to_bind =
             read.art_mesh_keyform_draw_orders()[start..start + count].to_vec();
-        let colors_to_bind =
-            if let Some(color_starts) = read.art_mesh_keyform_color_sources_start() {
-                let colors_start = color_starts[i] as usize;
+        let colors_to_bind = if let Some(color_starts) = read.art_mesh_keyform_color_sources_start()
+        {
+            let colors_start = color_starts[i] as usize;
 
-                collect_colors_to_bind(read, colors_start, count)
-            } else {
-                Vec::new()
-            };
+            collect_colors_to_bind(read, colors_start, count)
+        } else {
+            Vec::new()
+        };
 
         {
             let parent_deformer_index = read.art_mesh_parent_deformer_indices()[i];
@@ -722,10 +891,9 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
         let start = read.glue_keyform_sources_starts()[i] as usize;
         let count = read.glue_keyform_sources_counts()[i] as usize;
 
-        let mesh_indices = &read.glue_info_vertex_indices()
-            [glue_info_start..glue_info_start + glue_info_count];
-        let weights =
-            &read.glue_info_weights()[glue_info_start..glue_info_start + glue_info_count];
+        let mesh_indices =
+            &read.glue_info_vertex_indices()[glue_info_start..glue_info_start + glue_info_count];
+        let weights = &read.glue_info_weights()[glue_info_start..glue_info_start + glue_info_count];
 
         let intensities_to_bind = read.glue_keyform_intensities()[start..start + count].to_vec();
 
@@ -822,9 +990,8 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
     // same draw order by breaking ties via tree position.
 
     // TODO: something like this for parts
-    let mut draw_order_nodes = Arena::<DrawOrderNode>::with_capacity(
-        read.counts().draw_order_group_objects() as usize,
-    );
+    let mut draw_order_nodes =
+        Arena::<DrawOrderNode>::with_capacity(read.counts().draw_order_group_objects() as usize);
 
     let mut draw_order_indices_to_node_ids: Vec<Option<NodeId>> =
         vec![None; read.counts().draw_order_groups() as usize];
@@ -874,7 +1041,7 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
 
     let params = collect_param_data(read);
 
-    Puppet {
+    Puppet::from_parts(PuppetParts {
         node_roots,
         nodes: node_arena,
 
@@ -907,7 +1074,7 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
 
         draw_order_nodes,
         draw_order_root: draw_order_indices_to_node_ids[0].unwrap(),
-    }
+    })
 }
 
 pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
