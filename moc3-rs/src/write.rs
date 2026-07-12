@@ -1689,7 +1689,7 @@ mod tests {
             glue_keyform_intensities,
         );
 
-        if read.version < Version::V4_02 {
+        if a.version() < Version::V4_02 {
             return;
         }
 
