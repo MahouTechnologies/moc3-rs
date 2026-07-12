@@ -8,6 +8,7 @@ mod deformer;
 mod math;
 pub mod owned;
 pub mod puppet;
+pub mod write;
 
 #[derive(Error, Debug)]
 #[error("could not parse moc3")]

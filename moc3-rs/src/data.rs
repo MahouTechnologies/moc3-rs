@@ -61,7 +61,7 @@ pub enum Version {
 
 /// A fixed 64-byte name field, NUL-padded.
 #[repr(transparent)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 pub struct Id(pub [u8; 64]);
 
 impl Id {
@@ -116,7 +116,7 @@ pub enum Moc3Error {
 }
 
 /// The canvas metadata block.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CanvasInfo {
     pub pixels_per_unit: f32,
     pub x_origin: f32,
@@ -135,8 +135,8 @@ pub struct CountInfo<'a> {
 }
 
 /// Number of count entries in the table: 23 base, plus 9 more from v4.02.
-const COUNT_FIELDS_BASE: usize = 23;
-const COUNT_FIELDS_V402: usize = 32;
+pub(crate) const COUNT_FIELDS_BASE: usize = 23;
+pub(crate) const COUNT_FIELDS_V402: usize = 32;
 
 /// Generates a count accessor reading entry `$i` of the table.
 ///
@@ -242,55 +242,67 @@ impl core::fmt::Debug for CountInfo<'_> {
 }
 
 /// Start of the section offset table (immediately after the 64-byte header).
-const TABLE: usize = 64;
+pub(crate) const TABLE: usize = 64;
 
-const OFF_COUNT_INFO: usize = TABLE; // 64
-const OFF_CANVAS_INFO: usize = TABLE + 4; // 68
+/// Physical size of the section offset table, in slots. This is sized
+/// for v5 files, even though only v4.02 files are currently supported.
+pub(crate) const TABLE_SLOTS: usize = 160;
+
+/// The runtime data starts immediately after the full offset table.
+pub(crate) const RUNTIME_DATA_START: usize = TABLE + TABLE_SLOTS * 4; // 704
+
+/// Bytes reserved for the header, the offset table, and the runtime data.
+pub(crate) const HEADER_RESERVE: usize = 1984;
+
+pub(crate) const MIN_FILE_SIZE: usize = 4096;
+
+pub(crate) const OFF_COUNT_INFO: usize = TABLE; // 64
+pub(crate) const OFF_CANVAS_INFO: usize = TABLE + 4; // 68
 
 // first field (`data`) is an inline placeholder
-const OFF_PARTS: usize = 72;
-const OFF_DEFORMERS: usize = 104;
-const OFF_WARP_DEFORMERS: usize = 140;
-const OFF_ROTATION_DEFORMERS: usize = 164;
+pub(crate) const OFF_PARTS: usize = 72;
+pub(crate) const OFF_DEFORMERS: usize = 104;
+pub(crate) const OFF_WARP_DEFORMERS: usize = 140;
+pub(crate) const OFF_ROTATION_DEFORMERS: usize = 164;
 // `runtime_ignored: [u32; 4]` + 16 pointers = 20 slots (80 bytes).
-const OFF_ART_MESHES: usize = 180;
-const OFF_PARAMETERS: usize = 260;
-const OFF_PART_KEYFORMS: usize = 296;
-const OFF_WARP_DEFORMER_KEYFORMS: usize = 300;
-const OFF_ROTATION_DEFORMER_KEYFORMS: usize = 308;
-const OFF_ART_MESH_KEYFORMS: usize = 336;
-const OFF_KEYFORM_POSITIONS: usize = 348;
-const OFF_PARAMETER_BINDING_INDICES: usize = 352;
-const OFF_KEYFORM_BINDINGS: usize = 356;
-const OFF_PARAMETER_BINDINGS: usize = 364;
-const OFF_KEYS: usize = 372;
-const OFF_UVS: usize = 376;
-const OFF_VERTEX_INDICES: usize = 380;
-const OFF_ART_MESH_MASKS: usize = 384;
-const OFF_DRAW_ORDER_GROUPS: usize = 388;
-const OFF_DRAW_ORDER_GROUP_OBJECTS: usize = 408;
-const OFF_GLUES: usize = 420;
-const OFF_GLUE_INFOS: usize = 456;
-const OFF_GLUE_KEYFORMS: usize = 464;
+pub(crate) const OFF_ART_MESHES: usize = 180;
+pub(crate) const OFF_PARAMETERS: usize = 260;
+pub(crate) const OFF_PART_KEYFORMS: usize = 296;
+pub(crate) const OFF_WARP_DEFORMER_KEYFORMS: usize = 300;
+pub(crate) const OFF_ROTATION_DEFORMER_KEYFORMS: usize = 308;
+pub(crate) const OFF_ART_MESH_KEYFORMS: usize = 336;
+pub(crate) const OFF_KEYFORM_POSITIONS: usize = 348;
+pub(crate) const OFF_PARAMETER_BINDING_INDICES: usize = 352;
+pub(crate) const OFF_KEYFORM_BINDINGS: usize = 356;
+pub(crate) const OFF_PARAMETER_BINDINGS: usize = 364;
+pub(crate) const OFF_KEYS: usize = 372;
+pub(crate) const OFF_UVS: usize = 376;
+pub(crate) const OFF_VERTEX_INDICES: usize = 380;
+pub(crate) const OFF_ART_MESH_MASKS: usize = 384;
+pub(crate) const OFF_DRAW_ORDER_GROUPS: usize = 388;
+pub(crate) const OFF_DRAW_ORDER_GROUP_OBJECTS: usize = 408;
+pub(crate) const OFF_GLUES: usize = 420;
+pub(crate) const OFF_GLUE_INFOS: usize = 456;
+pub(crate) const OFF_GLUE_KEYFORMS: usize = 464;
 
 // v3.03+
-const OFF_WARP_DEFORMER_KEYFORMS_V303: usize = 468;
+pub(crate) const OFF_WARP_DEFORMER_KEYFORMS_V303: usize = 468;
 
 // v4.02+
-const OFF_PARAMETER_EXTENSIONS: usize = 472;
-const OFF_WARP_DEFORMER_KEYFORMS_V402: usize = 484;
-const OFF_ROTATION_DEFORMER_KEYFORMS_V402: usize = 488;
-const OFF_ART_MESH_KEYFORMS_V402: usize = 492;
-const OFF_KEYFORM_MULTIPLY_COLORS: usize = 496;
-const OFF_KEYFORM_SCREEN_COLORS: usize = 508;
-const OFF_PARAMETERS_V402: usize = 520;
-const OFF_BLEND_SHAPE_PARAMETER_BINDINGS: usize = 532;
-const OFF_BLEND_SHAPE_KEYFORM_BINDINGS: usize = 544;
-const OFF_BLEND_SHAPE_WARP_DEFORMERS: usize = 564;
-const OFF_BLEND_SHAPE_ART_MESHES: usize = 576;
-const OFF_BLEND_SHAPE_CONSTRAINT_INDICES: usize = 588;
-const OFF_BLEND_SHAPE_CONSTRAINTS: usize = 592;
-const OFF_BLEND_SHAPE_CONSTRAINT_VALUES: usize = 604;
+pub(crate) const OFF_PARAMETER_EXTENSIONS: usize = 472;
+pub(crate) const OFF_WARP_DEFORMER_KEYFORMS_V402: usize = 484;
+pub(crate) const OFF_ROTATION_DEFORMER_KEYFORMS_V402: usize = 488;
+pub(crate) const OFF_ART_MESH_KEYFORMS_V402: usize = 492;
+pub(crate) const OFF_KEYFORM_MULTIPLY_COLORS: usize = 496;
+pub(crate) const OFF_KEYFORM_SCREEN_COLORS: usize = 508;
+pub(crate) const OFF_PARAMETERS_V402: usize = 520;
+pub(crate) const OFF_BLEND_SHAPE_PARAMETER_BINDINGS: usize = 532;
+pub(crate) const OFF_BLEND_SHAPE_KEYFORM_BINDINGS: usize = 544;
+pub(crate) const OFF_BLEND_SHAPE_WARP_DEFORMERS: usize = 564;
+pub(crate) const OFF_BLEND_SHAPE_ART_MESHES: usize = 576;
+pub(crate) const OFF_BLEND_SHAPE_CONSTRAINT_INDICES: usize = 588;
+pub(crate) const OFF_BLEND_SHAPE_CONSTRAINTS: usize = 592;
+pub(crate) const OFF_BLEND_SHAPE_CONSTRAINT_VALUES: usize = 604;
 
 #[inline]
 fn read_u32(data: &[u8], off: usize) -> u32 {
@@ -304,7 +316,7 @@ fn read_f32(data: &[u8], off: usize) -> f32 {
 
 /// The byte just past the end of the section offset table for `version`. The
 /// whole table must be present for any field pointer to be readable.
-fn table_end(version: Version) -> usize {
+pub(crate) fn table_end(version: Version) -> usize {
     if version >= Version::V4_02 {
         OFF_BLEND_SHAPE_CONSTRAINT_VALUES + 8
     } else if version >= Version::V3_03 {
