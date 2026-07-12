@@ -292,14 +292,14 @@ pub fn collect_param_data(read: Moc3<'_>) -> ParamData {
         }
     }
 
-    ParamData {
-        count: param_count,
-        ids: param_ids,
-        defaults: read.parameter_default_values().to_vec(),
-        maxes: read.parameter_max_values().to_vec(),
-        mins: read.parameter_min_values().to_vec(),
-        repeats: param_repeats,
-        decimals: read.parameter_decimal_places().to_vec(),
-        types: param_types,
-    }
+    ParamData::new(
+        param_count,
+        param_ids,
+        read.parameter_default_values().to_vec(),
+        read.parameter_max_values().to_vec(),
+        read.parameter_min_values().to_vec(),
+        param_repeats,
+        read.parameter_decimal_places().to_vec(),
+        param_types,
+    )
 }

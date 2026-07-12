@@ -259,7 +259,6 @@ struct AppState {
     /// Time of the previous frame, used to compute `delta_seconds` for physics.
     last_update: Option<Instant>,
     params: Vec<f32>,
-    opacities: Vec<f32>,
     /// Random phase offsets for the per-parameter sine animation.
     sts: Vec<f32>,
     textures: Vec<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
@@ -292,8 +291,7 @@ impl AppState {
         // Run the physics simulation and write outputs into `params`.
         self.physics.step(&mut self.params, delta);
 
-        self.puppet
-            .update(&self.params, &self.opacities, &mut self.frame_data);
+        self.puppet.update(&self.params, &mut self.frame_data);
     }
 }
 
@@ -305,7 +303,6 @@ pub fn run(
     physics_driven: Vec<bool>,
     params: Vec<f32>,
 ) {
-    let opacities = vec![1.0; puppet.part_count as usize];
     let mut sts = params.clone();
     let mut rng = rand::rng();
 
@@ -317,7 +314,6 @@ pub fn run(
         puppet,
         frame_data,
         params,
-        opacities,
         sts,
         start: Instant::now(),
         last_update: None,

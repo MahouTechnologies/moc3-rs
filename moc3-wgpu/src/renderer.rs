@@ -74,7 +74,10 @@ impl Renderer {
             })
         });
 
-        self.render_orders[..].copy_from_slice(&frame_data.art_mesh_render_orders);
+        // Only the visible meshes are in here, so its length varies frame to frame.
+        self.render_orders.clear();
+        self.render_orders
+            .extend_from_slice(&frame_data.art_mesh_render_orders);
         for (i, data) in frame_data.art_mesh_data.iter().enumerate() {
             queue.write_buffer(&self.vertex_buffers[i], 0, cast_slice(data.as_slice()));
         }
@@ -460,7 +463,7 @@ pub fn new_renderer(
     Renderer {
         mesh_flags: puppet.art_mesh_flags.clone(),
         texture_nums: puppet.art_mesh_textures.clone(),
-        render_orders: vec![0; puppet.art_mesh_count as usize],
+        render_orders: Vec::with_capacity(puppet.art_mesh_count as usize),
         mask_indices: puppet.art_mesh_mask_indices.clone(),
 
         pipeline,

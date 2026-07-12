@@ -18,16 +18,17 @@ use crate::{
 };
 
 use self::{
+    applicator::key_table_is_outside,
     collect::{
         collect_blend_shapes, collect_colors_to_bind, collect_param_data,
         collect_parameter_bindings,
     },
-    draw_order::draw_order_tree,
+    draw_order::sort_render_order,
 };
 
 pub use crate::deformer::rotation_deformer::TransformData;
 pub use applicator::{ApplicatorKind, BlendShapeConstraints, ParamApplicator};
-pub use draw_order::DrawOrderNode;
+pub use draw_order::{DrawGroup, DrawObject};
 pub use indextree::{Arena, NodeId};
 pub use node::{
     ArtMeshData, DeformerNode, GlueNode, NodeKind, PartNode, RotationDeformerData, WarpDeformerData,
@@ -44,6 +45,8 @@ pub struct ParamData {
     pub repeats: Vec<bool>,
     pub decimals: Vec<u32>,
     pub types: Vec<ParameterType>,
+    /// How close a value must be to a key to count as sitting on it.
+    pub snap_epsilons: Vec<f32>,
 }
 
 impl ParamData {
@@ -58,6 +61,7 @@ impl ParamData {
         decimals: Vec<u32>,
         types: Vec<ParameterType>,
     ) -> Self {
+        let snap_epsilons = decimals.iter().map(|&d| 0.1f32.powi(d as i32)).collect();
         Self {
             count,
             ids,
@@ -67,8 +71,20 @@ impl ParamData {
             repeats,
             decimals,
             types,
+            snap_epsilons,
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ObjectTable {
+    /// The part an object sits in, or `-1`.
+    pub parent_part: Vec<i32>,
+    /// The deformer an object sits under, or `-1`. Empty for parts.
+    pub parent_deformer: Vec<i32>,
+    /// The keyform binding whose parameters drive this object.
+    pub binding: Vec<u32>,
+    pub is_enabled: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +99,15 @@ pub struct Puppet {
 
     params: ParamData,
     applicators: Vec<ParamApplicator>,
+
+    part_table: ObjectTable,
+    deformer_table: ObjectTable,
+    art_mesh_table: ObjectTable,
+    /// Whether each part was authored visible, which seeds its opacity.
+    part_is_visible: Vec<bool>,
+    /// The key tables of each keyform binding, by binding index. Shared by every
+    /// object bound to it, so a binding's range is tested once per frame.
+    binding_key_tables: Vec<Vec<(Vec<f32>, usize)>>,
 
     pub art_mesh_count: u32,
     warp_deformer_count: u32,
@@ -99,8 +124,8 @@ pub struct Puppet {
     pub art_mesh_mask_indices: Vec<Vec<u32>>,
     pub art_mesh_vertexes: Vec<u32>,
 
-    draw_order_nodes: Arena<DrawOrderNode>,
-    draw_order_root: NodeId,
+    draw_groups: Vec<DrawGroup>,
+    draw_objects: Vec<DrawObject>,
 }
 
 pub struct PuppetParts {
@@ -114,6 +139,12 @@ pub struct PuppetParts {
 
     pub params: ParamData,
     pub applicators: Vec<ParamApplicator>,
+
+    pub part_table: ObjectTable,
+    pub deformer_table: ObjectTable,
+    pub art_mesh_table: ObjectTable,
+    pub part_is_visible: Vec<bool>,
+    pub binding_key_tables: Vec<Vec<(Vec<f32>, usize)>>,
 
     pub art_mesh_count: u32,
     pub warp_deformer_count: u32,
@@ -130,8 +161,8 @@ pub struct PuppetParts {
     pub art_mesh_mask_indices: Vec<Vec<u32>>,
     pub art_mesh_vertexes: Vec<u32>,
 
-    pub draw_order_nodes: Arena<DrawOrderNode>,
-    pub draw_order_root: NodeId,
+    pub draw_groups: Vec<DrawGroup>,
+    pub draw_objects: Vec<DrawObject>,
 }
 
 #[derive(Pod, Zeroable, Debug, Clone, Copy)]
@@ -173,12 +204,25 @@ impl BlendColor {
 #[derive(Debug, Clone)]
 pub struct PuppetFrameData {
     corrected_params: Vec<f32>,
+
+    /// Per-part opacity.
+    pub part_opacities: Vec<f32>,
+    /// Each part's opacity with its ancestors.
     pub calculated_part_opacities: Vec<f32>,
+
+    /// Whether each object is being drawn at all.
+    pub part_enabled: Vec<bool>,
+    pub deformer_enabled: Vec<bool>,
+    pub art_mesh_enabled: Vec<bool>,
+    /// Whether each keyform binding's parameters have left its key range.
+    binding_out_of_range: Vec<bool>,
 
     art_mesh_draw_orders: Vec<f32>,
     part_draw_orders: Vec<f32>,
 
+    /// The art meshes to draw, back to front. Invisible ones are left out.
     pub art_mesh_render_orders: Vec<u32>,
+
     pub art_mesh_data: Vec<Vec<Vec2>>,
     pub art_mesh_opacities: Vec<f32>,
     pub art_mesh_colors: Vec<BlendColor>,
@@ -192,6 +236,14 @@ pub struct PuppetFrameData {
 
     deformer_scale_data: Vec<f32>,
     glue_data: Vec<f32>,
+
+    // Scratch for `sort_render_order`.
+    draw_object_orders: Vec<i32>,
+    draw_group_cursors: Vec<u32>,
+    bucket_first: Vec<i32>,
+    bucket_last: Vec<i32>,
+    bucket_next: Vec<i32>,
+    render_sequence: Vec<u32>,
 }
 
 impl PuppetFrameData {
@@ -267,6 +319,12 @@ impl Puppet {
             params: parts.params,
             applicators: parts.applicators,
 
+            part_table: parts.part_table,
+            deformer_table: parts.deformer_table,
+            art_mesh_table: parts.art_mesh_table,
+            part_is_visible: parts.part_is_visible,
+            binding_key_tables: parts.binding_key_tables,
+
             art_mesh_count: parts.art_mesh_count,
             warp_deformer_count: parts.warp_deformer_count,
             rotation_deformer_count: parts.rotation_deformer_count,
@@ -282,13 +340,23 @@ impl Puppet {
             art_mesh_mask_indices: parts.art_mesh_mask_indices,
             art_mesh_vertexes: parts.art_mesh_vertexes,
 
-            draw_order_nodes: parts.draw_order_nodes,
-            draw_order_root: parts.draw_order_root,
+            draw_groups: parts.draw_groups,
+            draw_objects: parts.draw_objects,
         }
     }
 
     pub fn param_data(&self) -> &ParamData {
         &self.params
+    }
+
+    /// The part each art mesh belongs to, or `-1`. Indexed by art mesh.
+    pub fn art_mesh_parent_parts(&self) -> &[i32] {
+        &self.art_mesh_table.parent_part
+    }
+
+    /// The part each part sits inside, or `-1`. Indexed by part.
+    pub fn part_parent_parts(&self) -> &[i32] {
+        &self.part_table.parent_part
     }
 
     /// Depth-first flattened view of the deformer tree.
@@ -314,31 +382,74 @@ impl Puppet {
         &self.glue_nodes
     }
 
-    pub fn update(
-        &self,
-        input_params: &[f32],
-        part_opacities: &[f32],
-        frame_data: &mut PuppetFrameData,
-    ) {
+    /// Whether the parameters driving each keyform binding still sit inside the
+    /// range its keys cover. Once one leaves, everything bound to it is disabled.
+    fn resolve_bindings(&self, frame_data: &mut PuppetFrameData) {
+        for (binding, key_tables) in self.binding_key_tables.iter().enumerate() {
+            frame_data.binding_out_of_range[binding] =
+                key_tables.iter().any(|(keys, parameter)| {
+                    key_table_is_outside(
+                        keys,
+                        frame_data.corrected_params[*parameter],
+                        self.params.snap_epsilons[*parameter],
+                    )
+                });
+        }
+    }
+
+    /// Work out all of the parts, deformers, and artmeshes that are enabled.
+    fn resolve_enabled(&self, frame_data: &mut PuppetFrameData) {
+        let out_of_range = &frame_data.binding_out_of_range;
+
+        let parts = &self.part_table;
+        for i in 0..self.part_count as usize {
+            let parent = parts.parent_part[i];
+            frame_data.part_enabled[i] = parts.is_enabled[i]
+                && !out_of_range[parts.binding[i] as usize]
+                && (parent == -1 || frame_data.part_enabled[parent as usize]);
+        }
+
+        let deformers = &self.deformer_table;
+        for i in 0..deformers.is_enabled.len() {
+            let part = deformers.parent_part[i];
+            let deformer = deformers.parent_deformer[i];
+            frame_data.deformer_enabled[i] = deformers.is_enabled[i]
+                && !out_of_range[deformers.binding[i] as usize]
+                && (part == -1 || frame_data.part_enabled[part as usize])
+                && (deformer == -1 || frame_data.deformer_enabled[deformer as usize]);
+        }
+
+        let art_meshes = &self.art_mesh_table;
+        for i in 0..self.art_mesh_count as usize {
+            let part = art_meshes.parent_part[i];
+            let deformer = art_meshes.parent_deformer[i];
+            frame_data.art_mesh_enabled[i] = art_meshes.is_enabled[i]
+                && !out_of_range[art_meshes.binding[i] as usize]
+                && (part == -1 || frame_data.part_enabled[part as usize])
+                && (deformer == -1 || frame_data.deformer_enabled[deformer as usize]);
+        }
+    }
+
+    pub fn update(&self, input_params: &[f32], frame_data: &mut PuppetFrameData) {
         for i in 0..input_params.len() {
             let res = input_params[i].clamp(self.params.mins[i], self.params.maxes[i]);
             frame_data.corrected_params[i] = res;
         }
 
-        for root in self.part_roots.iter().copied() {
-            let root_node = self.parts[root].get();
-            let root_index = root_node.kind_index as usize;
-            frame_data.calculated_part_opacities[root_index] = part_opacities[root_index];
-            for id in root.descendants(&self.parts).skip(1) {
-                let cur = &self.parts[id];
-                let cur_index = cur.get().kind_index as usize;
-                let parent = &self.parts[cur.parent().unwrap()];
-                let parent_index = parent.get().kind_index as usize;
+        self.resolve_bindings(frame_data);
+        self.resolve_enabled(frame_data);
 
-                frame_data.calculated_part_opacities[cur_index] = part_opacities[cur_index];
-                frame_data.calculated_part_opacities[cur_index] *=
-                    frame_data.calculated_part_opacities[parent_index];
-            }
+        // A part's opacity is its own multiplied by everything it sits inside.
+        for i in 0..self.part_count as usize {
+            let opacity = frame_data.part_opacities[i].clamp(0.0, 1.0);
+            frame_data.part_opacities[i] = opacity;
+
+            let parent = self.part_table.parent_part[i];
+            frame_data.calculated_part_opacities[i] = if parent == -1 {
+                opacity
+            } else {
+                opacity * frame_data.calculated_part_opacities[parent as usize]
+            };
         }
 
         for applicator in &self.applicators {
@@ -534,13 +645,8 @@ impl Puppet {
                     }
                 };
 
-                // Propogate down the opacity numbers
+                // Propogate down the opacities.
                 *child_opacity *= parent_opacity;
-                // The parent part also has opacity to deal with
-                if child.parent_part_index != -1 {
-                    *child_opacity *=
-                        frame_data.calculated_part_opacities[child.parent_part_index as usize];
-                }
                 *child_color = parent_color.blend(&child_color);
 
                 match &child.data {
@@ -558,6 +664,15 @@ impl Puppet {
             }
         }
 
+        // An art mesh also takes the opacity from the part it belongs to.
+        for i in 0..self.art_mesh_count as usize {
+            let part = self.art_mesh_table.parent_part[i];
+            if part != -1 {
+                frame_data.art_mesh_opacities[i] *=
+                    frame_data.calculated_part_opacities[part as usize];
+            }
+        }
+
         for glue in &self.glue_nodes {
             assert_ne!(glue.art_mesh_index[0], glue.art_mesh_index[1]);
 
@@ -571,7 +686,7 @@ impl Puppet {
             )
         }
 
-        draw_order_tree(&self.draw_order_nodes, self.draw_order_root, frame_data);
+        sort_render_order(&self.draw_groups, &self.draw_objects, frame_data);
     }
 }
 
@@ -985,47 +1100,67 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
         &mut applicators,
     );
 
-    // Here we do the draw order groups. This lets us apply draw orders to the mesh depending on how
-    // the draw order groups interact, and lets us calculate the actual priority when the nodes have the
-    // same draw order by breaking ties via tree position.
+    let draw_groups: Vec<DrawGroup> = (0..read.counts().draw_order_groups() as usize)
+        .map(|i| DrawGroup {
+            object_start: read.draw_order_group_object_sources_starts()[i],
+            object_count: read.draw_order_group_object_sources_counts()[i],
+            total_count: read.draw_order_group_object_sources_total_counts()[i],
+            min_order: read.draw_order_group_minimum_draw_orders()[i] as i32,
+            max_order: read.draw_order_group_maximum_draw_orders()[i] as i32,
+        })
+        .collect();
 
-    // TODO: something like this for parts
-    let mut draw_order_nodes =
-        Arena::<DrawOrderNode>::with_capacity(read.counts().draw_order_group_objects() as usize);
+    let draw_objects: Vec<DrawObject> = (0..read.counts().draw_order_group_objects() as usize)
+        .map(|i| DrawObject {
+            is_part: read.draw_order_group_object_types()[i]
+                == DrawOrderGroupObjectType::Part as u32,
+            index: read.draw_order_group_object_indices()[i],
+            owned_group: u32::try_from(read.draw_order_group_object_self_indices()[i]).ok(),
+        })
+        .collect();
 
-    let mut draw_order_indices_to_node_ids: Vec<Option<NodeId>> =
-        vec![None; read.counts().draw_order_groups() as usize];
+    let binding_key_tables: Vec<Vec<(Vec<f32>, usize)>> = (0..read.counts().keyform_bindings()
+        as usize)
+        .map(|i| {
+            collect_parameter_bindings(
+                read,
+                &parameter_bindings_to_parameter,
+                kb_starts[i] as usize,
+                kb_counts[i] as usize,
+            )
+        })
+        .collect();
 
-    draw_order_indices_to_node_ids[0] =
-        Some(draw_order_nodes.new_node(DrawOrderNode::Part { index: u32::MAX }));
+    let part_table = ObjectTable {
+        parent_part: read.part_parent_part_indices().to_vec(),
+        parent_deformer: Vec::new(),
+        binding: read.part_keyform_binding_sources_indices().to_vec(),
+        is_enabled: read.part_is_enabled().iter().map(|&e| e != 0).collect(),
+    };
+    let part_is_visible = read.part_is_visible().iter().map(|&v| v != 0).collect();
 
-    for i in 0..read.counts().draw_order_groups() {
-        let i = i as usize;
+    let deformer_table = ObjectTable {
+        parent_part: read.deformer_parent_part_indices().to_vec(),
+        parent_deformer: read.deformer_parent_deformer_indices().to_vec(),
+        binding: (0..read.counts().deformers() as usize)
+            .map(|i| {
+                let specific = read.deformer_specific_sources_indices()[i] as usize;
+                if read.deformer_types()[i] == 0 {
+                    read.warp_deformer_keyform_binding_sources_indices()[specific]
+                } else {
+                    read.rotation_deformer_keyform_binding_sources_indices()[specific]
+                }
+            })
+            .collect(),
+        is_enabled: read.deformer_is_enabled().iter().map(|&e| e != 0).collect(),
+    };
 
-        let object_sources_start = read.draw_order_group_object_sources_starts()[i];
-        let object_sources_count = read.draw_order_group_object_sources_counts()[i];
-
-        for a in object_sources_start..(object_sources_start + object_sources_count) {
-            let a = a as usize;
-
-            let type_index = read.draw_order_group_object_indices()[a];
-            let to_append = if read.draw_order_group_object_types()[a]
-                == DrawOrderGroupObjectType::ArtMesh as u32
-            {
-                DrawOrderNode::ArtMesh { index: type_index }
-            } else {
-                DrawOrderNode::Part { index: type_index }
-            };
-
-            let res = draw_order_indices_to_node_ids[i]
-                .unwrap()
-                .append_value(to_append, &mut draw_order_nodes);
-            let self_index = read.draw_order_group_object_self_indices()[a];
-            if self_index != -1 {
-                draw_order_indices_to_node_ids[self_index as usize] = Some(res);
-            }
-        }
-    }
+    let art_mesh_table = ObjectTable {
+        parent_part: read.art_mesh_parent_part_indices().to_vec(),
+        parent_deformer: read.art_mesh_parent_deformer_indices().to_vec(),
+        binding: read.art_mesh_keyform_binding_sources_indices().to_vec(),
+        is_enabled: read.art_mesh_is_enabled().iter().map(|&e| e != 0).collect(),
+    };
 
     // Here we parse all of the data related to parameters onto the puppet. Right now,
     // only the default value is saved, but this will be filled with all of the other data
@@ -1053,6 +1188,12 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
         params,
         applicators,
 
+        part_table,
+        deformer_table,
+        art_mesh_table,
+        part_is_visible,
+        binding_key_tables,
+
         art_mesh_count: read.counts().art_meshes(),
         warp_deformer_count: read.counts().warp_deformers(),
         rotation_deformer_count: read.counts().rotation_deformers(),
@@ -1072,9 +1213,65 @@ pub fn puppet_from_moc3(read: Moc3<'_>) -> Puppet {
         art_mesh_mask_indices,
         art_mesh_vertexes: read.art_mesh_vertex_counts().to_vec(),
 
-        draw_order_nodes,
-        draw_order_root: draw_order_indices_to_node_ids[0].unwrap(),
+        draw_groups,
+        draw_objects,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn framedata_for_tests(
+    art_meshes: usize,
+    parts: usize,
+    groups: &[DrawGroup],
+    objects: &[DrawObject],
+) -> PuppetFrameData {
+    let order_levels = groups
+        .iter()
+        .map(|g| (g.max_order - g.min_order + 1).max(0) as usize)
+        .max()
+        .unwrap_or(0);
+    let group_objects = groups
+        .iter()
+        .map(|g| g.object_count as usize)
+        .max()
+        .unwrap_or(0);
+
+    PuppetFrameData {
+        corrected_params: Vec::new(),
+        part_opacities: vec![1.0; parts],
+        calculated_part_opacities: vec![1.0; parts],
+
+        part_enabled: vec![true; parts],
+        deformer_enabled: Vec::new(),
+        art_mesh_enabled: vec![true; art_meshes],
+        binding_out_of_range: Vec::new(),
+
+        art_mesh_draw_orders: vec![0.0; art_meshes],
+        part_draw_orders: vec![0.0; parts],
+
+        art_mesh_render_orders: Vec::new(),
+
+        draw_object_orders: vec![0; objects.len()],
+        draw_group_cursors: vec![0; groups.len()],
+        bucket_first: vec![-1; order_levels],
+        bucket_last: vec![-1; order_levels],
+        bucket_next: vec![-1; group_objects],
+        render_sequence: vec![u32::MAX; art_meshes],
+
+        art_mesh_data: Vec::new(),
+        art_mesh_opacities: vec![1.0; art_meshes],
+        art_mesh_colors: Vec::new(),
+
+        warp_deformer_data: Vec::new(),
+        rotation_deformer_data: Vec::new(),
+        warp_deformer_opacities: Vec::new(),
+        rotation_deformer_opacities: Vec::new(),
+        warp_deformer_colors: Vec::new(),
+        rotation_deformer_colors: Vec::new(),
+
+        deformer_scale_data: Vec::new(),
+        glue_data: Vec::new(),
+    }
 }
 
 pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
@@ -1088,14 +1285,48 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
         art_mesh_data.push(vec![Vec2::NAN; *count as usize]);
     }
 
+    let deformer_count =
+        puppet.warp_deformer_count as usize + puppet.rotation_deformer_count as usize;
+
+    let order_levels = puppet
+        .draw_groups
+        .iter()
+        .map(|g| (i64::from(g.max_order) - i64::from(g.min_order) + 1).max(0) as usize)
+        .max()
+        .unwrap_or(0);
+    let group_objects = puppet
+        .draw_groups
+        .iter()
+        .map(|g| g.object_count as usize)
+        .max()
+        .unwrap_or(0);
+
     PuppetFrameData {
         corrected_params: puppet.params.defaults.clone(),
+
+        part_opacities: puppet
+            .part_is_visible
+            .iter()
+            .map(|&visible| if visible { 1.0 } else { 0.0 })
+            .collect(),
         calculated_part_opacities: vec![1.0; puppet.part_count as usize],
+
+        part_enabled: vec![true; puppet.part_count as usize],
+        deformer_enabled: vec![true; deformer_count],
+        art_mesh_enabled: vec![true; puppet.art_mesh_count as usize],
+        binding_out_of_range: vec![false; puppet.binding_key_tables.len()],
 
         art_mesh_draw_orders: vec![0.0; puppet.art_mesh_count as usize],
         part_draw_orders: vec![0.0; puppet.part_count as usize],
 
-        art_mesh_render_orders: vec![0; puppet.art_mesh_count as usize],
+        art_mesh_render_orders: Vec::with_capacity(puppet.art_mesh_count as usize),
+
+        draw_object_orders: vec![0; puppet.draw_objects.len()],
+        draw_group_cursors: vec![0; puppet.draw_groups.len()],
+        bucket_first: vec![-1; order_levels],
+        bucket_last: vec![-1; order_levels],
+        bucket_next: vec![-1; group_objects],
+        render_sequence: vec![u32::MAX; puppet.art_mesh_count as usize],
 
         art_mesh_data,
         art_mesh_opacities: vec![0.0; puppet.art_mesh_count as usize],
@@ -1108,11 +1339,7 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
         warp_deformer_colors: vec![BlendColor::NAN; puppet.warp_deformer_count as usize],
         rotation_deformer_colors: vec![BlendColor::NAN; puppet.rotation_deformer_count as usize],
 
-        deformer_scale_data: vec![
-            f32::NAN;
-            puppet.warp_deformer_count as usize
-                + puppet.rotation_deformer_count as usize
-        ],
+        deformer_scale_data: vec![f32::NAN; deformer_count],
         glue_data: vec![f32::NAN; puppet.glue_count as usize],
     }
 }

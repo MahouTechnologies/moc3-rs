@@ -7,36 +7,31 @@ use crate::{deformer::rotation_deformer::TransformData, math::rescale};
 
 use super::{BlendColor, PuppetFrameData};
 
-// Returns the index of the element directly less than and the index of the element directly
-// greater than the given element.
-// Note this the values given are not *strictly* greater or less - if the given element
-// is present in the slice, the index of the given element will be returned, but it is
-// unspecified whether it will be the greater or lesser value.
-//
-// This function assumes the slice is sorted, and will give meaningless results otherwise.
-// This function also assumes that the given element exists in the bounds of the slice.
-fn lower_upper_indices(slice: &[f32], elem: &f32) -> (usize, usize) {
-    debug_assert!(slice.len() > 1);
+/// Locates `value` within a sorted key table. Returns the index of
+/// the key below it, and how far it sits between that key and the next, in `0..=1`.
+fn key_segment(keys: &[f32], value: f32) -> (usize, f32) {
+    let Some(last) = keys.len().checked_sub(1).filter(|&l| l > 0) else {
+        return (0, 0.0);
+    };
 
-    let value = slice.binary_search_by(|x| x.total_cmp(elem));
-    match value {
-        Ok(index) => {
-            if index == 0 {
-                // Element was first value, we can only return second
-                (0, 1)
-            } else if index == slice.len() - 1 {
-                // Element was last value, we can only return second-to-last
-                (slice.len() - 2, slice.len() - 1)
-            } else {
-                // We can chose either side here - this is arbitrary
-                (index, index + 1)
-            }
-        }
-        Err(index) => {
-            // We assume that an invalid value is in between the first and last element, so
-            // this subtraction will work fine.
-            (index - 1, index)
-        }
+    if value <= keys[0] {
+        return (0, 0.0);
+    }
+    if value >= keys[last] {
+        return (last - 1, 1.0);
+    }
+
+    // `value` lies strictly inside the table, so this lands in `1..=last`.
+    let upper = keys.partition_point(|&k| k <= value).clamp(1, last);
+    (upper - 1, rescale(value, keys[upper - 1], keys[upper]))
+}
+
+/// Whether `value` falls outside a key table's range.
+pub fn key_table_is_outside(keys: &[f32], value: f32, snap_eps: f32) -> bool {
+    match keys {
+        [] => false,
+        [key] => value <= key - snap_eps || value >= key + snap_eps,
+        [first, .., last] => value < first - snap_eps || value >= last + snap_eps,
     }
 }
 
@@ -50,11 +45,55 @@ pub struct BlendShapeConstraints {
 impl BlendShapeConstraints {
     pub fn process(&self, parameters: &[f32]) -> f32 {
         let param = parameters[self.parameter_index];
-        let (lower, upper) = lower_upper_indices(&self.keys, &param);
-        let scaled = rescale(param, self.keys[lower], self.keys[upper]);
+        let (lower, scaled) = key_segment(&self.keys, param);
+        let upper = (lower + 1).min(self.weights.len() - 1);
 
-        let res = ((1.0 - scaled) * self.weights[lower]) + (scaled * self.weights[upper]);
-        res
+        ((1.0 - scaled) * self.weights[lower]) + (scaled * self.weights[upper])
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn clamps_outside_the_table() {
+        let keys = [-1.0, 0.0, 2.0];
+
+        assert_eq!(key_segment(&keys, -5.0), (0, 0.0));
+        assert_eq!(key_segment(&keys, 9.0), (1, 1.0));
+
+        assert_eq!(key_segment(&keys, -0.5), (0, 0.5));
+        assert_eq!(key_segment(&keys, 1.0), (1, 0.5));
+
+        assert_eq!(key_segment(&keys, -1.0), (0, 0.0));
+        assert_eq!(key_segment(&keys, 2.0), (1, 1.0));
+    }
+
+    #[test]
+    fn lone_key_segment() {
+        assert_eq!(key_segment(&[3.0], 3.0), (0, 0.0));
+        assert_eq!(key_segment(&[3.0], -100.0), (0, 0.0));
+    }
+
+    #[test]
+    fn value_overflow_test() {
+        let keys = [-1.0, 0.0, 2.0];
+        let eps = 0.01;
+
+        assert!(!key_table_is_outside(&keys, -1.0, eps));
+        assert!(!key_table_is_outside(&keys, 1.0, eps));
+        assert!(!key_table_is_outside(&keys, 2.0, eps));
+
+        assert!(key_table_is_outside(&keys, -1.5, eps));
+        assert!(key_table_is_outside(&keys, 2.5, eps));
+
+        assert!(!key_table_is_outside(&keys, -1.005, eps));
+
+        assert!(!key_table_is_outside(&[1.0], 1.0, eps));
+        assert!(key_table_is_outside(&[1.0], 1.5, eps));
+
+        assert!(!key_table_is_outside(&[], 100.0, eps));
     }
 }
 
@@ -97,8 +136,8 @@ impl ParamApplicator {
         {
             let mut last_size = 1;
             for (i, (keys, index)) in data.iter().enumerate() {
-                let (lower, upper) = lower_upper_indices(keys, &parameters[*index]);
-                rescaled_params[i] = rescale(parameters[*index], keys[lower], keys[upper]);
+                let (lower, scaled) = key_segment(keys, parameters[*index]);
+                rescaled_params[i] = scaled;
 
                 base_index += lower * last_size;
                 last_size *= keys.len();
@@ -118,6 +157,10 @@ impl ParamApplicator {
                     mult *= 1.0 - rescaled_params[i];
                 }
                 last_size *= keys.len();
+            }
+
+            if mult == 0.0 {
+                continue;
             }
 
             let data = get_choices(index);

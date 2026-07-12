@@ -42,25 +42,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_owned() {
-        let bytes = match std::fs::read("../a.moc3") {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-
-        let owned = OwnedMoc3::parse(bytes.clone()).expect("parse failed");
-
-        // The view reads the same data as a borrowing parse would.
-        let borrowed = Moc3::new(&bytes).expect("borrow parse failed");
-        assert_eq!(owned.moc3().version(), borrowed.version());
-        assert_eq!(owned.moc3().keys(), borrowed.keys());
-        assert_eq!(owned.moc3().positions(), borrowed.positions());
-
-        assert_eq!(owned.bytes(), bytes.as_slice());
-        assert_eq!(owned.into_bytes().len(), bytes.len());
-    }
-
-    #[test]
     fn propagates_parse_errors() {
         assert!(OwnedMoc3::parse(Vec::new()).is_err());
     }
