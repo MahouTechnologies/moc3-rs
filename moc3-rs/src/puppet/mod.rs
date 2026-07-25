@@ -238,11 +238,8 @@ pub struct PuppetFrameData {
     glue_data: Vec<f32>,
 
     // Scratch for `sort_render_order`.
-    draw_object_orders: Vec<i32>,
     draw_group_cursors: Vec<u32>,
-    bucket_first: Vec<i32>,
-    bucket_last: Vec<i32>,
-    bucket_next: Vec<i32>,
+    sorted_objects: Vec<u32>,
     render_sequence: Vec<u32>,
 }
 
@@ -1223,13 +1220,7 @@ pub(crate) fn framedata_for_tests(
     art_meshes: usize,
     parts: usize,
     groups: &[DrawGroup],
-    objects: &[DrawObject],
 ) -> PuppetFrameData {
-    let order_levels = groups
-        .iter()
-        .map(|g| (g.max_order - g.min_order + 1).max(0) as usize)
-        .max()
-        .unwrap_or(0);
     let group_objects = groups
         .iter()
         .map(|g| g.object_count as usize)
@@ -1251,11 +1242,8 @@ pub(crate) fn framedata_for_tests(
 
         art_mesh_render_orders: Vec::new(),
 
-        draw_object_orders: vec![0; objects.len()],
         draw_group_cursors: vec![0; groups.len()],
-        bucket_first: vec![-1; order_levels],
-        bucket_last: vec![-1; order_levels],
-        bucket_next: vec![-1; group_objects],
+        sorted_objects: vec![0; group_objects],
         render_sequence: vec![u32::MAX; art_meshes],
 
         art_mesh_data: Vec::new(),
@@ -1288,12 +1276,6 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
     let deformer_count =
         puppet.warp_deformer_count as usize + puppet.rotation_deformer_count as usize;
 
-    let order_levels = puppet
-        .draw_groups
-        .iter()
-        .map(|g| (i64::from(g.max_order) - i64::from(g.min_order) + 1).max(0) as usize)
-        .max()
-        .unwrap_or(0);
     let group_objects = puppet
         .draw_groups
         .iter()
@@ -1321,11 +1303,8 @@ pub fn framedata_for_puppet(puppet: &Puppet) -> PuppetFrameData {
 
         art_mesh_render_orders: Vec::with_capacity(puppet.art_mesh_count as usize),
 
-        draw_object_orders: vec![0; puppet.draw_objects.len()],
         draw_group_cursors: vec![0; puppet.draw_groups.len()],
-        bucket_first: vec![-1; order_levels],
-        bucket_last: vec![-1; order_levels],
-        bucket_next: vec![-1; group_objects],
+        sorted_objects: vec![0; group_objects],
         render_sequence: vec![u32::MAX; puppet.art_mesh_count as usize],
 
         art_mesh_data,
