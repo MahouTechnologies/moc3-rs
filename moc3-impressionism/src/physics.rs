@@ -201,10 +201,15 @@ impl PhysicsSystem {
             (tt, ta.to_radians())
         };
 
-        (
-            total_translation.rotate(Vec2::from_angle(-total_angle)),
-            total_angle,
-        )
+        let rad_angle = -total_angle;
+        let (sin, cos) = rad_angle.sin_cos();
+
+        let mut rotated = total_translation;
+        // Bug-for-bug compatibility with Cubism.
+        rotated.x = rotated.x * cos - rotated.y * sin;
+        rotated.y = rotated.x * sin + rotated.y * cos;
+
+        (rotated, total_angle)
     }
 
     /// Find fixpoint of physics system with the given params.
