@@ -2,6 +2,8 @@
 name = "moc3-wgpu"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true, features = ["extern_crate_alloc", "derive"] }
