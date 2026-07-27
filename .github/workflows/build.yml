@@ -9,14 +9,23 @@ on:
 
 jobs:
   build_and_test:
-    name: Build and Test
-    runs-on: windows-latest
+    name: Build and Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
     steps:
       - uses: actions/checkout@v7
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.0
 
-      - name: "Build and Test"
+      - name: Build and Test
         run: cargo test --all-features
