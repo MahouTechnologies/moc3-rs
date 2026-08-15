@@ -2,8 +2,8 @@ use glam::Vec2;
 use moc3_data::physics::{Physics3Data, PhysicsType};
 use moc3_rs::puppet::ParamData;
 
-use crate::UpdateData;
 use crate::pendulum::{Pendulum, PendulumPoint};
+use crate::{UpdateData, cubism_rotate};
 
 const MAX_WEIGHT: f32 = 100.0;
 const MOVEMENT_EPISLON: f32 = 0.00001;
@@ -201,15 +201,7 @@ impl PhysicsSystem {
             (tt, ta.to_radians())
         };
 
-        let rad_angle = -total_angle;
-        let (sin, cos) = rad_angle.sin_cos();
-
-        let mut rotated = total_translation;
-        // Bug-for-bug compatibility with Cubism.
-        rotated.x = rotated.x * cos - rotated.y * sin;
-        rotated.y = rotated.x * sin + rotated.y * cos;
-
-        (rotated, total_angle)
+        (cubism_rotate(total_translation, -total_angle), total_angle)
     }
 
     /// Find fixpoint of physics system with the given params.

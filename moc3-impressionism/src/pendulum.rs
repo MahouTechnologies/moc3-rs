@@ -2,6 +2,8 @@ use glam::Vec2;
 
 use moc3_data::physics::PhysicsVertex;
 
+use crate::cubism_rotate;
+
 #[derive(Clone, Debug)]
 pub struct PendulumPoint {
     /// The position on the current timestep.
@@ -168,8 +170,7 @@ impl Pendulum {
             let radian =
                 self.points[i].gravity.angle_to(current_gravity) / Self::ROTATION_SCALE_FACTOR;
 
-            // We can use from_angle here because everything is self consistent I'm pretty sure.
-            let rotated_direction = direction.rotate(Vec2::from_angle(radian));
+            let rotated_direction = cubism_rotate(direction, radian);
 
             // Apply velocity and force contributions.
             let normalized_dir = (rotated_direction
